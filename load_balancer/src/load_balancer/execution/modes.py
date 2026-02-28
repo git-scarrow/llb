@@ -20,6 +20,7 @@ class ExecutionMode(Enum):
     ALL = "all"             # Collect all responses in parallel
     SEQUENCE = "sequence"   # Serial chain through backends
     CONSENSUS = "consensus" # Majority vote - 2 of 3 agree wins
+    PLAN = "plan"           # Perplexity Computer-style task decomposition + specialization
 
 
 @dataclass
@@ -59,6 +60,62 @@ class ConsensusResult:
     # Local vs cloud agreement tracking
     local_cloud_agreement: Optional[bool] = None  # Did best local vs best cloud agree?
     local_cloud_similarity: Optional[float] = None  # Similarity score (0.0-1.0)
+
+
+@dataclass
+class PlanTask:
+    """A single subtask within a PLAN execution."""
+    id: str
+    description: str
+    prompt: str
+    capability: str = "general"
+    depends_on: List[str] = field(default_factory=list)
+
+
+@dataclass
+class PlanResult:
+    """Result of a PLAN execution across decomposed subtasks."""
+    goal: str
+    tasks: List[PlanTask] = field(default_factory=list)
+    task_results: Dict[str, BackendResult] = field(default_factory=dict)
+    final_response: Optional[BackendResult] = None
+    error: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# PLAN mode planner prompt — Perplexity Computer-style task decomposition
+# Inspiration: Perplexity Computer (2026-02-27 launch), Swarms (Apache-2.0)
+# ---------------------------------------------------------------------------
+_PLANNER_SYSTEM_PROMPT = """\
+You are a task orchestrator. Decompose the user request into a minimal set of subtasks, \
+each handled by a specialized AI capability. Respond ONLY with valid JSON — no prose, \
+no markdown fences, just the JSON object.
+
+Format:
+{{
+  "goal": "<brief restatement of what the user wants>",
+  "tasks": [
+    {{
+      "id": "t1",
+      "description": "<what this step produces>",
+      "capability": "<research|code|reasoning|creative|math|general>",
+      "depends_on": [],
+      "prompt": "<exact prompt for this subtask>"
+    }}
+  ]
+}}
+
+Rules:
+- Maximum {max_tasks} tasks. If the goal is atomic, return exactly one task with id "t1".
+- depends_on lists task IDs that must complete before this task starts.
+- capability must be one of: research, code, reasoning, creative, math, general.
+- Each prompt must be self-contained (do not assume the executor has context from other tasks).
+"""
+
+_ASSEMBLER_SYSTEM_PROMPT = """\
+You are synthesizing the outputs of multiple parallel AI subtasks into a single coherent response.
+Answer the user's original goal directly and concisely, incorporating all relevant subtask results.
+"""
 
 
 def _normalize_tool_calls(tool_calls: List[Dict]) -> str:
@@ -571,6 +628,149 @@ class ExecutionEngine:
             except Exception as e:
                 results.append(BackendResult(backend=backend, error=str(e)))
         return results
+
+    async def execute_plan(
+        self,
+        messages: List[Dict],
+        call_backend: Callable[[str, List[Dict]], Awaitable[BackendResult]],
+        planner_backend: str,
+        capability_nodes: Dict[str, List[str]],
+        default_nodes: List[str],
+        max_subtasks: int = 5,
+        subtask_timeout: float = 30.0,
+        overall_timeout: float = 120.0,
+    ) -> PlanResult:
+        """
+        Perplexity Computer-style multi-step task orchestration.
+
+        Steps:
+          1. Decompose: send the user prompt to planner_backend with a structured
+             system prompt requesting a JSON subtask graph.
+          2. Dispatch: execute independent tasks in parallel, sequential batches
+             for dependent tasks. Each subtask routed to the best capability-matched
+             backend node.
+          3. Assemble: send all subtask results back to planner_backend for synthesis
+             into a single final response.
+
+        Args:
+            messages: Original OpenAI-format user messages.
+            call_backend: async fn(backend_node, messages) → BackendResult.
+            planner_backend: Node to use for decomposition and assembly.
+            capability_nodes: maps capability string → list of eligible nodes.
+            default_nodes: fallback nodes when no capability match.
+            max_subtasks: Maximum subtasks allowed.
+            subtask_timeout: Per-subtask timeout in seconds.
+            overall_timeout: Wall-clock budget for the entire plan.
+
+        Inspiration: Perplexity Computer (2026-02-27), Swarms (Apache-2.0 kyegomez/swarms)
+        """
+        deadline = asyncio.get_event_loop().time() + overall_timeout
+
+        # --- Step 1: Decompose ---
+        system_prompt = _PLANNER_SYSTEM_PROMPT.format(max_tasks=max_subtasks)
+        planner_messages = [
+            {"role": "system", "content": system_prompt},
+            *messages,
+        ]
+
+        try:
+            decomp_result = await asyncio.wait_for(
+                call_backend(planner_backend, planner_messages),
+                timeout=subtask_timeout,
+            )
+        except asyncio.TimeoutError:
+            return PlanResult(goal="", error="Planner timed out during decomposition")
+
+        if not decomp_result.success or not decomp_result.response_body:
+            return PlanResult(
+                goal="",
+                error=f"Planner failed: {decomp_result.error or 'empty response'}",
+            )
+
+        # Parse the JSON task graph from the planner response
+        raw_text = _extract_text_content(decomp_result.response_body)
+        raw_text = _strip_thinking(raw_text)
+        raw_text = _strip_json_fences(raw_text).strip()
+        try:
+            plan_data = json.loads(raw_text)
+        except json.JSONDecodeError as exc:
+            logger.warning("PLAN: could not parse planner JSON: %s — raw: %.200s", exc, raw_text)
+            return PlanResult(goal="", error=f"Planner returned invalid JSON: {exc}")
+
+        goal = plan_data.get("goal", "")
+        raw_tasks = plan_data.get("tasks", [])[:max_subtasks]
+        if not raw_tasks:
+            return PlanResult(goal=goal, error="Planner returned no tasks")
+
+        tasks = [
+            PlanTask(
+                id=t.get("id", f"t{i+1}"),
+                description=t.get("description", ""),
+                prompt=t.get("prompt", ""),
+                capability=t.get("capability", "general").lower(),
+                depends_on=t.get("depends_on", []),
+            )
+            for i, t in enumerate(raw_tasks)
+        ]
+        logger.info("PLAN: decomposed into %d subtasks for goal: %.80s", len(tasks), goal)
+
+        # --- Step 2: Dispatch (topological batch execution) ---
+        task_map = {t.id: t for t in tasks}
+        task_results: Dict[str, BackendResult] = {}
+
+        async def run_subtask(task: PlanTask) -> BackendResult:
+            cap_nodes = capability_nodes.get(task.capability) or default_nodes
+            backend = cap_nodes[0] if cap_nodes else planner_backend
+            subtask_messages = [{"role": "user", "content": task.prompt}]
+            try:
+                remaining = deadline - asyncio.get_event_loop().time()
+                t = min(subtask_timeout, max(1.0, remaining))
+                return await asyncio.wait_for(call_backend(backend, subtask_messages), timeout=t)
+            except asyncio.TimeoutError:
+                return BackendResult(backend=backend, error="Subtask timed out")
+
+        # Kahn's algorithm: process in dependency order
+        completed: set = set()
+        remaining_tasks = list(tasks)
+        while remaining_tasks:
+            # Find tasks whose dependencies are all completed
+            ready = [t for t in remaining_tasks if set(t.depends_on).issubset(completed)]
+            if not ready:
+                logger.warning("PLAN: dependency cycle or unsatisfied dep; forcing remaining tasks")
+                ready = remaining_tasks  # break cycle
+
+            batch_results = await asyncio.gather(*[run_subtask(t) for t in ready])
+            for task, result in zip(ready, batch_results):
+                task_results[task.id] = result
+                completed.add(task.id)
+            remaining_tasks = [t for t in remaining_tasks if t.id not in completed]
+
+        # --- Step 3: Assemble ---
+        results_text = "\n\n".join(
+            f"[{task_map[tid].capability.upper()} — {task_map[tid].description}]\n"
+            + (_extract_text_content(res.response_body) if res.success and res.response_body else f"(failed: {res.error})")
+            for tid, res in task_results.items()
+            if tid in task_map
+        )
+        assembly_messages = [
+            {"role": "system", "content": _ASSEMBLER_SYSTEM_PROMPT},
+            {"role": "user", "content": f"Original goal: {goal}\n\nSubtask results:\n{results_text}"},
+        ]
+        try:
+            remaining = deadline - asyncio.get_event_loop().time()
+            final = await asyncio.wait_for(
+                call_backend(planner_backend, assembly_messages),
+                timeout=max(5.0, remaining),
+            )
+        except asyncio.TimeoutError:
+            final = BackendResult(backend=planner_backend, error="Assembler timed out")
+
+        return PlanResult(
+            goal=goal,
+            tasks=tasks,
+            task_results=task_results,
+            final_response=final,
+        )
 
     async def execute_consensus(
         self,

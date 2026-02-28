@@ -6,6 +6,8 @@ from .modes import (
     BackendResult,
     ConsensusResult,
     ExecutionEngine,
+    PlanTask,
+    PlanResult,
     compute_consensus,
 )
 
@@ -15,5 +17,7 @@ __all__ = [
     "BackendResult",
     "ConsensusResult",
     "ExecutionEngine",
+    "PlanTask",
+    "PlanResult",
     "compute_consensus",
 ]
