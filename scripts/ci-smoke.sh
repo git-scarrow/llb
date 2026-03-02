@@ -69,17 +69,22 @@ for i in {1..10}; do
   sleep 1
 done
 
+# node1 is a fake address — it only needs to hit the capacity check (Redis),
+# never an actual HTTP connection. node2 is the stub on localhost:9999.
+NODE1="node1:9998"
+NODE2="localhost:9999"
+
 echo "[ci-smoke] Seeding Redis model/node state..."
-docker exec -i ai_lb_redis redis-cli SADD nodes:healthy 'ai_lb_node1:9999' 'ai_lb_node2:9999' >/dev/null
-docker exec -i ai_lb_redis redis-cli SET node:ai_lb_node1:9999:models '{"object":"list","data":[{"id":"'"$MODEL_ID"'","object":"model"}]}' >/dev/null
-docker exec -i ai_lb_redis redis-cli SET node:ai_lb_node2:9999:models '{"object":"list","data":[{"id":"'"$MODEL_ID"'","object":"model"}]}' >/dev/null
-docker exec -i ai_lb_redis redis-cli SET session:s:$MODEL_ID ai_lb_node1:9999 >/dev/null
+docker exec -i ai_lb_redis redis-cli SADD nodes:healthy "$NODE1" "$NODE2" >/dev/null
+docker exec -i ai_lb_redis redis-cli SET "node:$NODE1:models" '{"object":"list","data":[{"id":"'"$MODEL_ID"'","object":"model"}]}' >/dev/null
+docker exec -i ai_lb_redis redis-cli SET "node:$NODE2:models" '{"object":"list","data":[{"id":"'"$MODEL_ID"'","object":"model"}]}' >/dev/null
+docker exec -i ai_lb_redis redis-cli SET "session:s:$MODEL_ID" "$NODE1" >/dev/null
 
 echo "[ci-smoke] Forcing capacity on node1; freeing node2..."
-docker exec -i ai_lb_redis redis-cli SET node:ai_lb_node1:9999:maxconn 1 >/dev/null
-docker exec -i ai_lb_redis redis-cli SET node:ai_lb_node1:9999:inflight 1 >/dev/null
-docker exec -i ai_lb_redis redis-cli DEL node:ai_lb_node2:9999:maxconn >/dev/null
-docker exec -i ai_lb_redis redis-cli SET node:ai_lb_node2:9999:inflight 0 >/dev/null
+docker exec -i ai_lb_redis redis-cli SET "node:$NODE1:maxconn" 1 >/dev/null
+docker exec -i ai_lb_redis redis-cli SET "node:$NODE1:inflight" 1 >/dev/null
+docker exec -i ai_lb_redis redis-cli DEL "node:$NODE2:maxconn" >/dev/null
+docker exec -i ai_lb_redis redis-cli SET "node:$NODE2:inflight" 0 >/dev/null
 
 round=1
 ok=0
