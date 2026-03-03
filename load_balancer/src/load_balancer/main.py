@@ -5,7 +5,7 @@ import logging
 import time
 from typing import List, Optional
 from fastapi import FastAPI, Request, Response, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 import uuid
 import asyncio
 from contextlib import asynccontextmanager
@@ -13,6 +13,11 @@ from contextlib import asynccontextmanager
 from . import config
 from .request_validation import sanitize_chat_request, sanitize_embeddings_request
 from .routing.strategies import get_routing_strategy
+from .execution.modes import (
+    execute_plan_stream,
+    collect_plan_result,
+    plan_result_to_openai_response,
+)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -52,6 +57,20 @@ http_client = None
 router = None
 logger = logging.getLogger("ai_lb")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+
+async def stream_backend(node: str, messages: list, model: str, request_id: str):
+    """Stream a custom messages payload to a backend node.
+
+    Used by the PLAN assembly phase to stream synthesized responses with
+    different messages than the original request body.
+    """
+    url = f"http://{node}/v1/chat/completions"
+    req_body = {"model": model, "messages": messages, "stream": True}
+    req_headers = {"x-request-id": request_id}
+    async with http_client.stream("POST", url, json=req_body, headers=req_headers) as response:
+        async for chunk in response.aiter_bytes():
+            yield chunk
 
 # Helper to resolve circuit breaker cooldown consistently across legacy and new config
 def _cb_cooldown_secs() -> int:
@@ -683,6 +702,63 @@ async def chat_completions(request: Request):
     headers["x-request-id"] = request_id
     forced_node = request.query_params.get("node")
     session_id = request.headers.get("x-session-id")
+
+    # PLAN execution mode: decompose → dispatch → assemble with SSE passthrough
+    exec_mode = request.headers.get("x-execution-mode", "").strip().lower()
+    if exec_mode == "plan":
+        planner_backend = eligible_nodes[0]
+        accept = request.headers.get("accept", "")
+
+        async def _plan_call_backend(node: str, messages: list) -> str:
+            url = f"http://{node}/v1/chat/completions"
+            req_body = {"model": model_name, "messages": messages, "stream": False}
+            resp = await http_client.post(url, json=req_body, headers={"x-request-id": request_id})
+            resp.raise_for_status()
+            return resp.json()["choices"][0]["message"]["content"]
+
+        async def _plan_stream_backend(node: str, messages: list):
+            async for chunk in stream_backend(node, messages, model_name, request_id):
+                yield chunk
+
+        if "text/event-stream" in accept:
+            async def plan_sse_generator():
+                async for event in execute_plan_stream(
+                    messages=body.get("messages", []),
+                    call_backend=_plan_call_backend,
+                    stream_backend=_plan_stream_backend,
+                    planner_backend=planner_backend,
+                    capability_nodes={},
+                    default_nodes=list(eligible_nodes),
+                ):
+                    if event.event_type == "token":
+                        yield f"data: {event.data['chunk']}\n\n".encode()
+                    elif event.event_type == "error":
+                        yield f"event: error\ndata: {json.dumps(event.data)}\n\n".encode()
+                    else:
+                        yield f"event: {event.event_type}\ndata: {json.dumps(event.data)}\n\n".encode()
+                yield b"data: [DONE]\n\n"
+
+            return StreamingResponse(
+                plan_sse_generator(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                    "x-request-id": request_id,
+                },
+            )
+        else:
+            result = await collect_plan_result(
+                execute_plan_stream(
+                    messages=body.get("messages", []),
+                    call_backend=_plan_call_backend,
+                    stream_backend=_plan_stream_backend,
+                    planner_backend=planner_backend,
+                    capability_nodes={},
+                    default_nodes=list(eligible_nodes),
+                )
+            )
+            return JSONResponse(plan_result_to_openai_response(result))
 
     async def attempt_stream(node: str):
         url = f"http://{node}/v1/chat/completions"
