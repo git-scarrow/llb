@@ -6,6 +6,8 @@ import math
 from typing import List, Optional, Dict, Any
 from itertools import cycle
 
+from .. import config as _config
+
 # In-memory state for round-robin cycling
 # A dictionary to hold an iterator for each model
 ROUND_ROBIN_STATE = {}
@@ -81,12 +83,14 @@ class LeastLoadedStrategy(RoutingStrategy):
 
 class PowerOfTwoChoicesStrategy(RoutingStrategy):
     """Power of Two Choices routing: sample 2 eligible nodes, pick the one with lower score.
-    Score = inflight_normalized + alpha * p95_latency_ewma + penalty_for_recent_5xx
+    Score = inflight_normalized + alpha * p95_latency_ewma + penalty_for_recent_5xx + beta * cost_normalized
+    beta=0 (default) disables cost term, preserving existing behavior exactly.
     """
 
-    def __init__(self, alpha: float = 0.5, penalty_weight: float = 2.0):
+    def __init__(self, alpha: float = 0.5, penalty_weight: float = 2.0, beta: float = 0.0):
         self.alpha = alpha
         self.penalty_weight = penalty_weight
+        self.beta = beta
 
     async def select_node(self, nodes: List[str], model_name: str, redis_client) -> Optional[str]:
         if not nodes:
@@ -96,17 +100,25 @@ class PowerOfTwoChoicesStrategy(RoutingStrategy):
 
         # Sample 2 nodes randomly
         candidates = random.sample(nodes, min(2, len(nodes)))
-        
-        best_node = None
-        best_score = float('inf')
-        
+
+        # Calculate base scores for each candidate
+        scores = {}
         for node in candidates:
-            score = await self._calculate_node_score(node, model_name, redis_client)
-            if score < best_score:
-                best_score = score
-                best_node = node
-                
-        return best_node
+            scores[node] = await self._calculate_node_score(node, model_name, redis_client)
+
+        # Add cost term with min-max normalization across the two candidates (opt-in via beta > 0)
+        if self.beta > 0:
+            costs = {}
+            for node in candidates:
+                costs[node] = await self._get_cost_estimate(node, model_name, redis_client)
+            cost_vals = list(costs.values())
+            cost_min, cost_max = min(cost_vals), max(cost_vals)
+            cost_range = cost_max - cost_min
+            for node in candidates:
+                cost_norm = (costs[node] - cost_min) / cost_range if cost_range > 0 else 0.0
+                scores[node] += self.beta * cost_norm
+
+        return min(scores, key=lambda n: scores[n])
 
     async def _calculate_node_score(self, node: str, model_name: str, redis_client) -> float:
         """Calculate node score based on inflight requests, latency, and failure rate."""
@@ -192,6 +204,27 @@ class PowerOfTwoChoicesStrategy(RoutingStrategy):
         except Exception:
             return 0.0
 
+    async def _get_cost_estimate(self, node: str, model_name: str, redis_client) -> float:
+        """Return estimated cost (USD) for one request to node based on EWMA output tokens."""
+        try:
+            pricing = getattr(_config, "BACKEND_COST_PER_TOKEN", {}).get(model_name)
+            if not pricing:
+                return 0.0
+            output_price = float(pricing.get("output", 0.0))  # USD per 1M tokens
+            if output_price <= 0:
+                return 0.0
+            cold_start = float(getattr(_config, "COST_EWMA_COLD_START_TOKENS", 256))
+            min_samples = int(getattr(_config, "COST_EWMA_MIN_SAMPLES", 5))
+            key_ewma = f"lb:output_tokens_ewma:{model_name}|{node}"
+            key_count = f"lb:output_tokens_count:{model_name}|{node}"
+            ewma_val = await redis_client.get(key_ewma)
+            count_val = await redis_client.get(key_count)
+            count = int(count_val) if count_val else 0
+            tokens = float(ewma_val) if (ewma_val and count >= min_samples) else cold_start
+            return tokens * output_price / 1_000_000.0
+        except Exception:
+            return 0.0
+
 
 class ConsistentHashingStrategy(RoutingStrategy):
     """Consistent hashing for sticky sessions."""
@@ -261,10 +294,10 @@ def get_routing_strategy(strategy_name: str, **kwargs) -> RoutingStrategy:
     
     # Pass configuration parameters for strategies that support them
     if strategy_name.upper() in ("P2C", "POWER_OF_TWO"):
-        from .. import config
         return strategy_class(
-            alpha=kwargs.get("alpha", config.P2C_ALPHA),
-            penalty_weight=kwargs.get("penalty_weight", config.P2C_PENALTY_WEIGHT)
+            alpha=kwargs.get("alpha", _config.P2C_ALPHA),
+            penalty_weight=kwargs.get("penalty_weight", _config.P2C_PENALTY_WEIGHT),
+            beta=kwargs.get("beta", _config.P2C_BETA),
         )
     elif strategy_name.upper() == "CONSISTENT_HASH":
         return strategy_class(virtual_nodes=kwargs.get("virtual_nodes", 150))

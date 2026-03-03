@@ -618,6 +618,22 @@ async def _record_stream_duration(model: str, node: str, elapsed_secs: float):
     except Exception:
         pass
 
+async def _record_output_tokens(model: str, node: str, tokens: int):
+    """Update EWMA of output tokens per model+node for cost-aware P2C scoring."""
+    try:
+        alpha = float(getattr(config, "COST_EWMA_ALPHA", 0.3))
+        ttl = int(getattr(config, "COST_EWMA_TTL_SECS", 3600))
+        key_ewma = f"lb:output_tokens_ewma:{model}|{node}"
+        key_count = f"lb:output_tokens_count:{model}|{node}"
+        current = await redis_client.get(key_ewma)
+        new_ewma = float(tokens) if current is None else (alpha * float(tokens) + (1.0 - alpha) * float(current))
+        await redis_client.set(key_ewma, new_ewma)
+        await redis_client.expire(key_ewma, ttl)
+        await redis_client.incrby(key_count, 1)
+        await redis_client.expire(key_count, ttl)
+    except Exception:
+        pass
+
 @app.api_route("/v1/chat/completions", methods=["POST"])
 async def chat_completions(request: Request):
     """Receives a chat completion request, routes it, and streams the response."""
@@ -772,14 +788,29 @@ async def chat_completions(request: Request):
             await _dec_inflight(node)
             raise CapacityError("model")
         try:
+            _beta = float(getattr(config, "P2C_BETA", 0.0))
+            _last_usage_tokens = 0
             async with http_client.stream("POST", url, json=body, headers=headers) as response:
                 # Treat 5xx and 404 as retryable failure across nodes
                 if response.status_code and (response.status_code >= 500 or response.status_code == 404):
                     await _record_failure(node)
                     raise httpx.HTTPStatusError("Upstream retryable error", request=response.request, response=response)
                 async for chunk in response.aiter_bytes():
+                    if _beta > 0:
+                        try:
+                            text = chunk.decode("utf-8", errors="ignore")
+                            for line in text.split("\n"):
+                                if line.startswith("data: ") and "[DONE]" not in line:
+                                    payload = json.loads(line[6:])
+                                    ct = int((payload.get("usage") or {}).get("completion_tokens", 0))
+                                    if ct > 0:
+                                        _last_usage_tokens = ct
+                        except Exception:
+                            pass
                     yield chunk
             await _record_success(node)
+            if _beta > 0 and _last_usage_tokens > 0:
+                asyncio.create_task(_record_output_tokens(model_name, node, _last_usage_tokens))
         finally:
             await _dec_inflight(node)
             await _dec_model(model_name)
@@ -1171,6 +1202,15 @@ async def chat_completions(request: Request):
                 await _record_failure(node)
                 raise httpx.HTTPStatusError("Upstream retryable error", request=None, response=None)
             await _record_success(node)
+            # Token accounting for cost-aware routing (fire-and-forget)
+            if float(getattr(config, "P2C_BETA", 0.0)) > 0:
+                try:
+                    resp_data = json.loads(content)
+                    ct = int((resp_data.get("usage") or {}).get("completion_tokens", 0))
+                    if ct > 0:
+                        asyncio.create_task(_record_output_tokens(model_name, node, ct))
+                except Exception as _te:
+                    logger.debug("[req=%s] cost-routing: token extraction failed for %s: %s", request_id, node, _te)
             out = Response(content=content, media_type=ctype, status_code=status_code)
             out.headers["x-selected-model"] = model_name
             out.headers["x-routed-node"] = node
@@ -1819,6 +1859,10 @@ async def set_prefs(request: Request):
     if isinstance(strat, str) and strat.lower() in ("any_first", "intersection_first"):
         config.AUTO_MODEL_STRATEGY = strat
         applied["auto_model_strategy"] = strat
+    cpt = body.get("backend_cost_per_token")
+    if isinstance(cpt, dict):
+        config.BACKEND_COST_PER_TOKEN.update({str(k): v for k, v in cpt.items()})
+        applied["backend_cost_per_token"] = {str(k): v for k, v in cpt.items()}
     return {"ok": True, "applied": applied}
 
 

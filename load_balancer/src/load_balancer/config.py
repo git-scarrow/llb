@@ -89,6 +89,21 @@ P2C_ROUTING_ENABLED = os.getenv("P2C_ROUTING_ENABLED", "true").lower() in ("1", 
 P2C_ALPHA = float(os.getenv("P2C_ALPHA", 0.5))  # Weight for p95 latency in scoring
 P2C_PENALTY_WEIGHT = float(os.getenv("P2C_PENALTY_WEIGHT", 2.0))  # Weight for recent 5xx rate
 
+# Cost-aware P2C routing
+def _parse_cost_per_token(s: str) -> dict:
+    import json as _json
+    try:
+        return _json.loads(s)
+    except Exception:
+        return {}
+
+BACKEND_COST_PER_TOKEN: dict = _parse_cost_per_token(os.getenv("BACKEND_COST_PER_TOKEN", ""))
+P2C_BETA = float(os.getenv("P2C_BETA", 0.0))          # Cost weight in P2C scoring (0 = disabled)
+COST_EWMA_ALPHA = float(os.getenv("COST_EWMA_ALPHA", 0.3))         # EWMA decay factor
+COST_EWMA_TTL_SECS = int(os.getenv("COST_EWMA_TTL_SECS", 3600))    # TTL for EWMA Redis keys
+COST_EWMA_COLD_START_TOKENS = int(os.getenv("COST_EWMA_COLD_START_TOKENS", 256))  # Default estimate during cold start
+COST_EWMA_MIN_SAMPLES = int(os.getenv("COST_EWMA_MIN_SAMPLES", 5))  # Min observations before trusting EWMA
+
 # Enhanced retry and failover configuration
 ATTEMPTS_PER_MODEL = int(os.getenv("ATTEMPTS_PER_MODEL", 3))
 CROSS_MODEL_FALLBACK = os.getenv("CROSS_MODEL_FALLBACK", "false").lower() in ("1", "true", "yes")
