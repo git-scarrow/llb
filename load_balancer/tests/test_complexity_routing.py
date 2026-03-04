@@ -80,15 +80,16 @@ class TestComplexityScorer:
         assert tier == MODEL_CLASSES["historical_small"]["candidates"]
 
     # 3. Long plain text (> 8 000 chars), no other signals
-    def test_long_plain_text_near_point_30_small_tier(self):
+    def test_long_plain_text_near_point_30_medium_tier(self):
+        # AILB-MT-1 recalibration: LOW_THRESHOLD lowered to 0.10, HIGH to 0.25.
+        # 8000-char plain text scores ~0.24 → now routes to medium tier.
         text = "a" * 8_000  # no code, no markers, no keywords
         score = _score(text)
         # length signal: min(8000/10000, 1.0)*0.30 = 0.24
         assert 0.23 <= score <= 0.25
-        assert score < 0.35
         router = ComplexityRoutingStrategy()
         tier = router.get_complexity_model(score, MODEL_CLASSES)
-        assert tier == MODEL_CLASSES["historical_small"]["candidates"]
+        assert tier == MODEL_CLASSES["historical_medium"]["candidates"]
 
     # 4. 3 code fences → code signal maxed at 0.20
     def test_three_code_fences_maxes_code_signal(self):
@@ -156,12 +157,13 @@ class TestComplexityScorer:
 
     # 8. Multipart (long + code + reasoning) → high score → any tier
     def test_multipart_high_score_any_tier(self):
-        # 5 000 chars → 0.15; 3 fences → 0.20; 3 reasoning kw → 0.25; total 0.60
-        # Add markers to push over 0.65
+        # AILB-MT-1 recalibration: HIGH_THRESHOLD is now 0.25.
+        # 5 000 chars → 0.15; 3 fences → 0.20; 3 reasoning kw → 0.25; total ~0.60
+        # Any score > 0.25 routes to any-tier.
         body = "a" * 5_000
         text = f"{body} ``` code ``` here ``` end analyze compare evaluate first, then,"
         score = _score(text)
-        assert score > 0.65
+        assert score > 0.25
         router = ComplexityRoutingStrategy()
         tier = router.get_complexity_model(score, MODEL_CLASSES)
         assert tier is None  # any-tier → caller selects freely
@@ -177,24 +179,24 @@ class TestTierBoundaries:
     def setup_method(self):
         self.router = ComplexityRoutingStrategy()
 
-    # 9. score == 0.35 → medium
-    def test_score_035_is_medium(self):
-        result = self.router.get_complexity_model(0.35, MODEL_CLASSES)
+    # 9. score == LOW_THRESHOLD (0.10) → medium
+    def test_score_at_low_threshold_is_medium(self):
+        result = self.router.get_complexity_model(0.10, MODEL_CLASSES)
         assert result == MODEL_CLASSES["historical_medium"]["candidates"]
 
-    # 10. score == 0.65 → medium (HIGH_THRESHOLD inclusive)
-    def test_score_065_is_medium(self):
-        result = self.router.get_complexity_model(0.65, MODEL_CLASSES)
+    # 10. score == HIGH_THRESHOLD (0.25) → medium (inclusive)
+    def test_score_at_high_threshold_is_medium(self):
+        result = self.router.get_complexity_model(0.25, MODEL_CLASSES)
         assert result == MODEL_CLASSES["historical_medium"]["candidates"]
 
-    # 11. score == 0.34 → small
-    def test_score_034_is_small(self):
-        result = self.router.get_complexity_model(0.34, MODEL_CLASSES)
+    # 11. score just below LOW (0.09) → small
+    def test_score_below_low_threshold_is_small(self):
+        result = self.router.get_complexity_model(0.09, MODEL_CLASSES)
         assert result == MODEL_CLASSES["historical_small"]["candidates"]
 
-    # 12. score == 0.66 → any
-    def test_score_066_is_any(self):
-        result = self.router.get_complexity_model(0.66, MODEL_CLASSES)
+    # 12. score just above HIGH (0.26) → any
+    def test_score_above_high_threshold_is_any(self):
+        result = self.router.get_complexity_model(0.26, MODEL_CLASSES)
         assert result is None
 
     def test_score_zero_is_small(self):

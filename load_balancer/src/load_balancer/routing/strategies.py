@@ -259,8 +259,11 @@ class ComplexityRoutingStrategy(RoutingStrategy):
     """
 
     # Complexity thresholds: [0, LOW) → small, [LOW, HIGH) → medium, [HIGH, 1] → large/any
-    LOW_THRESHOLD: float = 0.35
-    HIGH_THRESHOLD: float = 0.65
+    # Calibrated from AILB-MT-1 telemetry (2026-03-04): scorer ceiling is ~0.32,
+    # so the original 0.35/0.65 bounds were unreachable. New values use the full
+    # observed score range: small<0.10, medium 0.10–0.25, large>0.25.
+    LOW_THRESHOLD: float = 0.10
+    HIGH_THRESHOLD: float = 0.25
 
     def __init__(self):
         self._p2c = PowerOfTwoChoicesStrategy()
