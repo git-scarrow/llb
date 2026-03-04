@@ -13,3 +13,9 @@ classifiers = [
 ]
 packages = {find = {where = "src"}}
 python_requires = ">=3.9"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "e2e: end-to-end tests requiring a live stack (skipped when AI_LB_BASE_URL is unset)",
+]
