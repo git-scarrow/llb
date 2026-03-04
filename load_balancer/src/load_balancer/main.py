@@ -2015,6 +2015,10 @@ async def chat_completions(request: Request):
     model_defaulted = sanitized.default_applied is not None
     start_time = time.monotonic()
 
+    # AILB-MT-1: complexity routing telemetry context (populated below if COMPLEXITY_ROUTING_ENABLED)
+    _complexity_score: Optional[float] = None
+    _complexity_tier: Optional[str] = None  # "small" | "medium" | "large" | None
+
     # Resolve auto/default sentinel to a concrete model id
     if _is_model_sentinel(model_name):
         prefer_intersection = request.query_params.get("require_all", "false").lower() in ("1", "true", "yes")
@@ -2026,8 +2030,16 @@ async def chat_completions(request: Request):
             if messages:
                 _complexity_router = ComplexityRoutingStrategy()
                 score = _complexity_router.score_prompt_complexity(messages)
+                _complexity_score = score
                 model_classes = getattr(config, "MODEL_CLASSES", {}) or {}
                 tier_candidates = _complexity_router.get_complexity_model(score, model_classes)
+                # Determine tier label for telemetry
+                if score < ComplexityRoutingStrategy.LOW_THRESHOLD:
+                    _complexity_tier = "small"
+                elif score <= ComplexityRoutingStrategy.HIGH_THRESHOLD:
+                    _complexity_tier = "medium"
+                else:
+                    _complexity_tier = "large"
                 if tier_candidates:
                     # Try each candidate in tier order until we find a healthy one
                     for candidate in tier_candidates:
@@ -2035,8 +2047,8 @@ async def chat_completions(request: Request):
                         if candidate_nodes:
                             resolved = candidate
                             logger.info(
-                                "Complexity routing: score=%.2f selected tier candidate '%s'",
-                                score, candidate,
+                                "Complexity routing: score=%.2f tier=%s selected tier candidate '%s'",
+                                score, _complexity_tier, candidate,
                             )
                             break
 
@@ -2656,6 +2668,36 @@ async def chat_completions(request: Request):
             out.headers["x-model-defaulted"] = "true" if model_defaulted else "false"
             # Success: set sticky mapping
             await _set_sticky_node(session_id, model_name, node)
+            # AILB-MT-1: emit complexity routing telemetry record
+            if _complexity_score is not None:
+                try:
+                    import os as _os
+                    _elapsed_ms = int((time.monotonic() - start_time) * 1000)
+                    _output_tokens: Optional[int] = None
+                    try:
+                        _resp_json = json.loads(content)
+                        _output_tokens = (
+                            _resp_json.get("usage", {}).get("completion_tokens")
+                            or _resp_json.get("usage", {}).get("output_tokens")
+                        )
+                    except Exception:
+                        pass
+                    _log_path = _os.environ.get("COMPLEXITY_ROUTING_LOG", "/tmp/complexity_routing.jsonl")
+                    _record = json.dumps({
+                        "ts": time.time(),
+                        "request_id": request_id,
+                        "model": model_name,
+                        "node": node,
+                        "complexity_score": round(_complexity_score, 4),
+                        "complexity_tier": _complexity_tier,
+                        "elapsed_ms": _elapsed_ms,
+                        "output_tokens": _output_tokens,
+                        "status_code": status_code,
+                    })
+                    with open(_log_path, "a") as _f:
+                        _f.write(_record + "\n")
+                except Exception:
+                    pass
             return out
         finally:
             await _dec_inflight(node)
