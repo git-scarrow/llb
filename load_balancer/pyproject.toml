@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ai_lb_load_balancer"
+name = "llb_load_balancer"
 version = "0.1.0"
-description = "The core routing service for the AI Load Balancer."
+description = "The core routing service for the Large Language Balancer."
 authors = [{name = "AI Assistant"}]
 license = {file = "LICENSE"}
 classifiers = [
@@ -17,5 +17,5 @@ python_requires = ">=3.9"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
-    "e2e: end-to-end tests requiring a live stack (skipped when AI_LB_BASE_URL is unset)",
+    "e2e: end-to-end tests requiring a live stack (skipped when LLB_BASE_URL is unset)",
 ]

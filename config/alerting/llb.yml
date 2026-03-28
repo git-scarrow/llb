@@ -1,32 +1,32 @@
-# config/alerting/ai-lb.yml
-# Prometheus alerting rules for ai-lb.
+# config/alerting/llb.yml
+# Prometheus alerting rules for LLB.
 # Reference: docs/ds7-production-deployment-spec.md §3.4
 
 groups:
-  - name: ai-lb
+  - name: llb
     interval: 30s
     rules:
 
       # ── Error rate ────────────────────────────────────────────────────────
-      - alert: AILBHighErrorRate
+      - alert: LLBHighErrorRate
         expr: |
           (
-            rate(ai_lb_failovers_total[2m]) /
-            rate(ai_lb_requests_total[2m])
+            rate(llb_failovers_total[2m]) /
+            rate(llb_requests_total[2m])
           ) > 0.05
         for: 2m
         labels:
           severity: critical
         annotations:
-          summary: "ai-lb error rate above 5% for 2+ minutes"
+          summary: "LLB error rate above 5% for 2+ minutes"
           description: >
             Error rate is {{ printf "%.1f" (mul 100 $value) }}% over the last 2 minutes.
             Check backend health and circuit breaker state.
           runbook: "docs/ds7-production-deployment-spec.md §4.5 — Circuit Breaker Manual Reset"
 
       # ── Circuit breaker ───────────────────────────────────────────────────
-      - alert: AILBCircuitBreakerOpen
-        expr: ai_lb_circuit_breaker_open == 1
+      - alert: LLBCircuitBreakerOpen
+        expr: llb_circuit_breaker_open == 1
         for: 60s
         labels:
           severity: warning
@@ -38,27 +38,27 @@ groups:
           runbook: "docs/ds7-production-deployment-spec.md §4.5 — Circuit Breaker Manual Reset"
 
       # ── All nodes down ────────────────────────────────────────────────────
-      - alert: AILBAllNodesUnhealthy
-        expr: count(ai_lb_up == 1) == 0
+      - alert: LLBAllNodesUnhealthy
+        expr: count(llb_up == 1) == 0
         for: 0m
         labels:
           severity: critical
         annotations:
-          summary: "CRITICAL: All ai-lb backend nodes are unhealthy"
+          summary: "CRITICAL: All LLB backend nodes are unhealthy"
           description: >
-            No healthy nodes available. ai-lb is unable to serve requests.
+            No healthy nodes available. LLB is unable to serve requests.
             All requests will return 503.
           runbook: "docs/ds7-production-deployment-spec.md §4.1 — Cold Start"
 
       # ── EWMA token cost anomaly ────────────────────────────────────────────
       # Detects a node's EWMA output tokens exceeding 3x the median across nodes.
       # Indicates runaway verbose responses or model misbehavior on a specific node.
-      - alert: AILBEwmaTokenCostAnomaly
+      - alert: LLBEwmaTokenCostAnomaly
         expr: |
           (
-            ai_lb_ewma_output_tokens
+            llb_ewma_output_tokens
             /
-            quantile(0.5, ai_lb_ewma_output_tokens)
+            quantile(0.5, llb_ewma_output_tokens)
           ) > 3
         for: 5m
         labels:
@@ -71,28 +71,28 @@ groups:
             May indicate verbose backend responses inflating cost estimates.
 
       # ── No traffic (dead man's switch) ───────────────────────────────────
-      - alert: AILBNoTraffic
-        expr: rate(ai_lb_requests_total[5m]) == 0
+      - alert: LLBNoTraffic
+        expr: rate(llb_requests_total[5m]) == 0
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "ai-lb has received no requests in 5 minutes"
+          summary: "LLB has received no requests in 5 minutes"
           description: >
-            No requests have been routed through ai-lb in the last 5 minutes.
+            No requests have been routed through LLB in the last 5 minutes.
             Check if the service is reachable and if upstream clients are healthy.
 
       # ── High P99 latency ─────────────────────────────────────────────────
-      - alert: AILBHighP99Latency
+      - alert: LLBHighP99Latency
         expr: |
           histogram_quantile(0.99,
-            sum by (le) (rate(ai_lb_latency_seconds_bucket[5m]))
+            sum by (le) (rate(llb_latency_seconds_bucket[5m]))
           ) > 10
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "ai-lb P99 latency above 10 seconds"
+          summary: "LLB P99 latency above 10 seconds"
           description: >
             P99 request latency is {{ printf "%.1f" $value }}s, exceeding 10s threshold.
             Check backend node latencies and REQUEST_TIMEOUT_SECS config.

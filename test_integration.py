@@ -1,6 +1,6 @@
 import openai
 
-# Configure the client to point to our ai-lb load balancer
+# Configure the client to point to our llb load balancer
 client = openai.OpenAI(
     base_url="http://localhost:8000/v1",
     api_key="not-needed"
@@ -13,7 +13,7 @@ try:
     
     if not model_ids:
         print("❌ Test Failed: Load balancer returned no models.")
-        print("   Check if your LMStudio server is running and if the ai-lb-monitor has found it.")
+        print("   Check if your LMStudio server is running and if the llb-monitor has found it.")
     else:
         print("✅ Test Passed: Successfully retrieved models.")
         print("Available models:", model_ids)
@@ -46,7 +46,7 @@ try:
             print(f"   Error: {e}")
 
 except openai.APIConnectionError as e:
-    print("❌ Test Failed: Could not connect to the ai-lb load balancer.")
+    print("❌ Test Failed: Could not connect to the llb load balancer.")
     print("   Please ensure the docker-compose stack is running.")
     print(f"   Error: {e.__cause__}")
 except Exception as e:

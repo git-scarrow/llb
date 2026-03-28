@@ -1,7 +1,7 @@
-MCP Server for AI-LB
+MCP Server for LLB
 
 Overview
-- Exposes the AI-LB (load balancer + monitor) via the Model Context Protocol (MCP) so any compliant agent can call tools/resources without bespoke adapters.
+- Exposes the LLB (load balancer + monitor) via the Model Context Protocol (MCP) so any compliant agent can call tools/resources without bespoke adapters.
 - Provides tools for listing models, creating chat completions, embeddings, querying health/metrics, inspecting nodes, setting per‑node concurrency caps, and finding common models across nodes.
 
 Quick Start (CLI / Agents)
@@ -16,7 +16,7 @@ Claude Desktop (example)
 - Add to `claude_desktop_config.json` (or UI):
   {
     "mcpServers": {
-      "ai-lb": {
+      "llb": {
         "command": "python",
         "args": ["mcp_server/server.py"],
         "env": {"LB_URL": "http://localhost:8000"}
@@ -35,8 +35,8 @@ Exposed Tools
 - `lb.common_models(nodes?)` → Returns exact ID intersection across either `nodes:healthy` or explicit list.
 
 Resources
-- `resourceId: ai-lb/metrics` → Fetch returns the full Prometheus text.
-- `resourceId: ai-lb/health` → Fetch returns JSON for LB health.
+- `resourceId: llb/metrics` → Fetch returns the full Prometheus text.
+- `resourceId: llb/health` → Fetch returns JSON for LB health.
 
 Notes
 - Chat completions are returned as aggregate text for simplicity; streaming could be added later via incremental MCP content.

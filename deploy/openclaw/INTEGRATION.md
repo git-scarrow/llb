@@ -1,29 +1,29 @@
 # OpenClaw Integration Guide
 
-This directory contains the deployment configuration for integrating `ai-lb` with the **OpenClaw** agent platform using the Infrastructure Sidecar pattern.
+This directory contains the deployment configuration for integrating `llb` with the **OpenClaw** agent platform using the Infrastructure Sidecar pattern.
 
 ## Architecture
 
-In this setup, `ai-lb` acts as a "Sidecar" or "Downstream Dependency" to OpenClaw. OpenClaw treats `ai-lb` strictly as a black-box OpenAI-compatible API provider.
+In this setup, `llb` acts as a "Sidecar" or "Downstream Dependency" to OpenClaw. OpenClaw treats `llb` strictly as a black-box OpenAI-compatible API provider.
 
 ```mermaid
 graph LR
-    OpenClaw[OpenClaw Agent] -- HTTP /v1/chat/completions --> AILB[AI Load Balancer]
-    AILB -- Redis Protocol --> Redis[(Redis Registry)]
-    AILB -- HTTP --> Providers[Upstream LLMs (vLLM, Ollama, etc)]
+    OpenClaw[OpenClaw Agent] -- HTTP /v1/chat/completions --> LLB[Large Language Balancer]
+    LLB -- Redis Protocol --> Redis[(Redis Registry)]
+    LLB -- HTTP --> Providers[Upstream LLMs (vLLM, Ollama, etc)]
 ```
 
 ### Key Principles
 
-1.  **Black Box Contract**: OpenClaw knows nothing about the internal routing logic, P2C strategy, or hedging mechanisms of `ai-lb`. It simply sends standard OpenAI API requests.
+1.  **Black Box Contract**: OpenClaw knows nothing about the internal routing logic, P2C strategy, or hedging mechanisms of `llb`. It simply sends standard OpenAI API requests.
 2.  **Network Isolation**: Communication happens over a private Docker network `llm-mesh`.
-3.  **Immutable Infrastructure**: `ai-lb` containers are treated as immutable artifacts.
+3.  **Immutable Infrastructure**: `llb` containers are treated as immutable artifacts.
 
 ## Scaling
 
 To add more compute capacity (throughput) to the system, **do not** modify the OpenClaw configuration.
 
-Instead, scale the `ai-lb` layer horizontally or, more commonly, register more Upstream LLM nodes into the shared Redis registry. `ai-lb` will automatically discover new upstream nodes via Redis.
+Instead, scale the `llb` layer horizontally or, more commonly, register more Upstream LLM nodes into the shared Redis registry. `llb` will automatically discover new upstream nodes via Redis.
 
 To scale the load balancer itself (if it becomes a bottleneck):
 1.  Increase the replica count of the `load_balancer` service.
@@ -32,7 +32,7 @@ To scale the load balancer itself (if it becomes a bottleneck):
 ## Anti-Patterns
 
 ### ❌ Do NOT Import Python Code
-**Strictly Forbidden:** Do not attempt to mount the `ai-lb` source code into the OpenClaw container or import `load_balancer` Python modules directly.
+**Strictly Forbidden:** Do not attempt to mount the `llb` source code into the OpenClaw container or import `load_balancer` Python modules directly.
 - **Why?** This creates a tight coupling that breaks independent deployment and scaling. OpenClaw should be language-agnostic regarding its LLM provider.
 
 ### ❌ Do NOT Bypass the Load Balancer

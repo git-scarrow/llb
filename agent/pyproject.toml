@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "hybrid-agent-client"
 version = "0.1.0"
-description = "Hybrid Agent Client for AI-LB"
+description = "Hybrid Agent Client for LLB"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

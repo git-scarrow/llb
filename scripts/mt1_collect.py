@@ -11,6 +11,7 @@ Usage:
 import argparse
 import asyncio
 import json
+import os
 import sys
 import time
 import random
@@ -123,7 +124,7 @@ async def send_one(client: "httpx.AsyncClient", url: str, prompt: str, tier: str
 
 async def main():
     parser = argparse.ArgumentParser(description="AILB-MT-1 workload generator")
-    parser.add_argument("--url", default="http://localhost:8000", help="LB base URL")
+    parser.add_argument("--url", default=os.getenv("LLB_URL", os.getenv("AI_LB_URL", f"http://localhost:{os.getenv('LLB_PORT', os.getenv('AI_LB_PORT', '8002'))}")), help="LB base URL")  # COMPAT: AI_LB_* fallback remove after 2026-06-01
     parser.add_argument("--n", type=int, default=600, help="Total requests to send")
     parser.add_argument("--concurrency", type=int, default=8, help="Max concurrent requests")
     args = parser.parse_args()

@@ -129,7 +129,7 @@ class Worker:
 
     def _post_chat(self, messages: List[Dict[str, Any]], task: Task) -> httpx.Response:
         if httpx is None:
-            raise RuntimeError("httpx is required to call AI-LB")
+            raise RuntimeError("httpx is required to call the load balancer")
         payload: Dict[str, Any] = {
             "model": task.payload.get("model", self._config.model),
             "messages": messages,

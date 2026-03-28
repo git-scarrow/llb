@@ -1,5 +1,0 @@
-httpx>=0.28.1
-openai>=1.108.1
-
-[dev]
-pytest>=7.0

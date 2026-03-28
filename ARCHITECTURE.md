@@ -1,15 +1,15 @@
-Unified AI Load Balancer
+LLB — Large Language Balancer
 
 Overview
 - Consolidates two implementations into a single FastAPI service with Redis‑backed state.
 - Preserves existing config defaults (ROUND_ROBIN) while adding health‑aware routing and failover.
 
-Design Choices (HAProxy vs. ai-lb)
-- Balancing: adopt LEAST_LOADED (ai-lb) with per‑node `maxconn` (HAProxy semantics via Redis keys).
+Design Choices (HAProxy vs. LLB)
+- Balancing: adopt LEAST_LOADED (LLB) with per‑node `maxconn` (HAProxy semantics via Redis keys).
 - Health checks: keep `/v1/models` probing (HAProxy style) via the Monitor service; dynamic membership in `nodes:healthy`.
-- Failover: retry on 5xx/network errors with bounded `MAX_RETRIES` (ai-lb), plus a simple circuit breaker.
+- Failover: retry on 5xx/network errors with bounded `MAX_RETRIES` (LLB), plus a simple circuit breaker.
 - Streaming: maintain byte stream passthrough for chat completions with accurate inflight accounting.
-- Metrics: expose minimal Prometheus text at `/metrics` (ai-lb) including requests total, up, inflight, failures.
+- Metrics: expose minimal Prometheus text at `/metrics` (LLB) including requests total, up, inflight, failures.
 - Config compatibility: defaults match old behavior; new envs are optional with safe fallbacks.
 
 Key Features

@@ -80,29 +80,29 @@ class TestMetricsEndpoint:
     def test_metrics_contains_requests_total(self, lb_client: httpx.Client):
         resp = lb_client.get("/metrics")
         assert resp.status_code == 200
-        assert "ai_lb_requests_total" in resp.text, (
-            "Missing 'ai_lb_requests_total' counter in /metrics"
+        assert "llb_requests_total" in resp.text, (
+            "Missing 'llb_requests_total' counter in /metrics"
         )
 
     def test_metrics_contains_inflight_gauge(self, lb_client: httpx.Client):
         resp = lb_client.get("/metrics")
         assert resp.status_code == 200
-        assert "ai_lb_inflight" in resp.text, (
-            "Missing 'ai_lb_inflight' gauge in /metrics"
+        assert "llb_inflight" in resp.text, (
+            "Missing 'llb_inflight' gauge in /metrics"
         )
 
     def test_metrics_contains_failures_gauge(self, lb_client: httpx.Client):
         resp = lb_client.get("/metrics")
         assert resp.status_code == 200
-        assert "ai_lb_failures" in resp.text, (
-            "Missing 'ai_lb_failures' gauge in /metrics"
+        assert "llb_failures" in resp.text, (
+            "Missing 'llb_failures' gauge in /metrics"
         )
 
     def test_metrics_contains_up_gauge(self, lb_client: httpx.Client):
         resp = lb_client.get("/metrics")
         assert resp.status_code == 200
-        assert "ai_lb_up" in resp.text, (
-            "Missing 'ai_lb_up' gauge in /metrics"
+        assert "llb_up" in resp.text, (
+            "Missing 'llb_up' gauge in /metrics"
         )
 
     def test_metrics_has_help_and_type_annotations(self, lb_client: httpx.Client):
@@ -119,7 +119,7 @@ class TestMetricsEndpoint:
 
         def _parse_counter(text: str) -> int:
             for line in text.splitlines():
-                if line.startswith("ai_lb_requests_total ") and "{" not in line:
+                if line.startswith("llb_requests_total ") and "{" not in line:
                     try:
                         return int(line.split()[-1])
                     except (ValueError, IndexError):
@@ -147,13 +147,13 @@ class TestMetricsEndpoint:
 
         if before >= 0 and after >= 0:
             assert after > before, (
-                f"ai_lb_requests_total did not increment: before={before}, after={after}"
+                f"llb_requests_total did not increment: before={before}, after={after}"
             )
 
     def test_metrics_up_node_present_for_healthy_nodes(
         self, lb_client: httpx.Client
     ):
-        """Each healthy node should appear in the ai_lb_up metric."""
+        """Each healthy node should appear in the llb_up metric."""
         nodes_resp = lb_client.get("/v1/nodes")
         if nodes_resp.status_code != 200:
             pytest.skip("Cannot introspect nodes")
@@ -188,11 +188,11 @@ class TestObservabilityIntegration:
         assert metrics_resp.status_code == 200
 
         nodes_found = int(health_resp.json().get("nodes_found", 0))
-        # Count ai_lb_up lines with value 1 in metrics
+        # Count llb_up lines with value 1 in metrics
         up_count = sum(
             1
             for line in metrics_resp.text.splitlines()
-            if line.startswith("ai_lb_up{") and line.endswith(" 1")
+            if line.startswith("llb_up{") and line.endswith(" 1")
         )
         assert up_count == nodes_found, (
             f"/health reports {nodes_found} nodes but /metrics shows {up_count} up"

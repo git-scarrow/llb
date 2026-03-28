@@ -280,10 +280,10 @@ def test_metrics_endpoint(monkeypatch):
     with make_client() as c:
         resp = c.get("/metrics")
         body = resp.text
-        assert "ai_lb_requests_total 42" in body
-        assert 'ai_lb_up{node="n1"} 1' in body
-        assert 'ai_lb_inflight{node="n1"} 3' in body
-        assert 'ai_lb_failures{node="n1"} 2' in body
+        assert "llb_requests_total 42" in body
+        assert 'llb_up{node="n1"} 1' in body
+        assert 'llb_inflight{node="n1"} 3' in body
+        assert 'llb_failures{node="n1"} 2' in body
 
 
 def test_sticky_sessions_prefer_same_node(monkeypatch):

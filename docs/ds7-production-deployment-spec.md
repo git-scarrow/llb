@@ -1,4 +1,4 @@
-# ai-lb Production Deployment Specification (AILB-DS-7)
+# LLB Production Deployment Specification (AILB-DS-7)
 
 **Phase:** 5
 **Status:** Design Spec
@@ -59,35 +59,35 @@ CMD ["uvicorn", "load_balancer.main:app", \
 `image.nix` file that provides `dockerImage` and a `docker-compose.override.nix` for compose
 fragments.
 
-Create `services/ai-lb/image.nix`:
+Create `services/llb/image.nix`:
 
 ```nix
-# services/ai-lb/image.nix
+# services/llb/image.nix
 { pkgs, ... }:
 {
   # Build reference — used by CI/CD to push to local registry
-  imageName = "localhost:5000/ai-lb";
+  imageName = "localhost:5000/llb";
   imageTag = "latest";
 
-  # Build command to run in ai-lb repo root
-  buildCmd = "docker build -f load_balancer/Dockerfile.prod -t localhost:5000/ai-lb:latest ./load_balancer";
+  # Build command to run in llb repo root
+  buildCmd = "docker build -f load_balancer/Dockerfile.prod -t localhost:5000/llb:latest ./load_balancer";
 
   # Health probe used by nix-docker-configs health collector
   healthProbe = "http://localhost:8000/health";
 }
 ```
 
-Create `services/ai-lb/compose.nix`:
+Create `services/llb/compose.nix`:
 
 ```nix
-# services/ai-lb/compose.nix — fragment merged by nix-docker-configs
+# services/llb/compose.nix — fragment merged by nix-docker-configs
 { ... }:
 {
-  services.ai-lb = {
-    image = "localhost:5000/ai-lb:latest";
+  services.llb = {
+    image = "localhost:5000/llb:latest";
     restart = "unless-stopped";
     network_mode = "host";
-    env_file = [ "/etc/ai-lb/prod.env" ];
+    env_file = [ "/etc/llb/prod.env" ];
     secrets = [ "anthropic_api_key" "openai_api_key" ];
     depends_on = { redis.condition = "service_healthy"; };
   };
@@ -131,11 +131,11 @@ services:
       start_period: 10s
 
   monitor:
-    image: "localhost:5000/ai-lb-monitor:latest"
+    image: "localhost:5000/llb-monitor:latest"
     container_name: ai_lb_monitor
     network_mode: host
     restart: always
-    env_file: /etc/ai-lb/prod.env
+    env_file: /etc/llb/prod.env
     environment:
       <<: *redis-env
     depends_on:
@@ -144,11 +144,11 @@ services:
     profiles: ["full"]
 
   load_balancer:
-    image: "localhost:5000/ai-lb:latest"
+    image: "localhost:5000/llb:latest"
     container_name: ai_lb_load_balancer
     network_mode: host
     restart: always
-    env_file: /etc/ai-lb/prod.env
+    env_file: /etc/llb/prod.env
     environment:
       <<: *redis-env
       # Secret injection: read from mounted files at runtime
@@ -171,7 +171,7 @@ volumes:
     driver_opts:
       type: none
       o: bind
-      device: /var/lib/ai-lb/redis
+      device: /var/lib/llb/redis
 ```
 
 ### 1.4 Redis Production Configuration
@@ -195,7 +195,7 @@ save 60 10000
 dbfilename dump.rdb
 
 # ── Memory ───────────────────────────────────────────────────────────────────
-# ai-lb stores metrics counters, node state, EWMA series, and circuit breaker
+# llb stores metrics counters, node state, EWMA series, and circuit breaker
 # flags. Peak usage under 100 nodes with 100 models: ~128 MB.
 maxmemory 256mb
 
@@ -250,7 +250,7 @@ def _require(name: str, description: str) -> str:
         raise ConfigError(
             f"[MISSING REQUIRED CONFIG] {name} is not set.\n"
             f"  What it does: {description}\n"
-            f"  Fix: export {name}=<value>  or add it to /etc/ai-lb/prod.env"
+            f"  Fix: export {name}=<value>  or add it to /etc/llb/prod.env"
         )
     return val
 
@@ -345,7 +345,7 @@ def validate_config() -> None:
     if errors:
         msg = "\n\n".join(errors)
         log.critical(
-            "ai-lb failed config validation at startup. Fix the following:\n\n%s\n\n"
+            "llb failed config validation at startup. Fix the following:\n\n%s\n\n"
             "Exiting.",
             msg
         )
@@ -477,7 +477,7 @@ All variables read by `config.py`. Required = must be set in prod; all others ha
 ### 2.4 Production env file template
 
 ```bash
-# /etc/ai-lb/prod.env — managed by host, not committed to git
+# /etc/llb/prod.env — managed by host, not committed to git
 
 # Required
 CLOUD_BACKENDS=claude=https://api.anthropic.com/v1|/run/secrets/anthropic_api_key|anthropic
@@ -492,7 +492,7 @@ HEDGING_ENABLED=true
 HEDGING_SMALL_MODELS_ONLY=true
 MULTI_EXEC_ENABLED=true
 COMPLEXITY_ROUTING_ENABLED=true
-COMPLEXITY_ROUTING_LOG=/var/log/ai-lb/complexity_routing.jsonl
+COMPLEXITY_ROUTING_LOG=/var/log/llb/complexity_routing.jsonl
 PLANNER_BACKEND=claude
 CROSS_MODEL_FALLBACK=true
 FALLBACK_CHAINS=reliable=cloud:claude(timeout=45)>local:auto(timeout=60)
@@ -565,7 +565,7 @@ format (no `prometheus_client` library — custom renderer in `main.py`).
 ```yaml
 # prometheus.yml — add to scrape_configs
 scrape_configs:
-  - job_name: 'ai-lb'
+  - job_name: 'llb'
     scrape_interval: 15s
     scrape_timeout: 10s
     static_configs:
@@ -576,7 +576,7 @@ scrape_configs:
 
 ### 3.3 Grafana Dashboard Specification
 
-**Dashboard title:** `ai-lb — Production Overview`
+**Dashboard title:** `llb — Production Overview`
 **Refresh:** 30s
 **Time range default:** Last 1 hour
 
@@ -621,9 +621,9 @@ scrape_configs:
 ### 3.4 Alerting Rules
 
 ```yaml
-# alerting/ai-lb.yml
+# alerting/llb.yml
 groups:
-  - name: ai-lb
+  - name: llb
     interval: 30s
     rules:
 
@@ -638,7 +638,7 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "ai-lb error rate above 5% for 2+ minutes"
+          summary: "llb error rate above 5% for 2+ minutes"
           description: >
             Error rate is {{ printf "%.1f" (mul 100 $value) }}% over the last 2 minutes.
             Check backend health and circuit breaker state.
@@ -664,9 +664,9 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "CRITICAL: All ai-lb backend nodes are unhealthy"
+          summary: "CRITICAL: All llb backend nodes are unhealthy"
           description: >
-            No healthy nodes available. ai-lb is unable to serve requests.
+            No healthy nodes available. llb is unable to serve requests.
             All requests will return 503.
           runbook: "Section 4.1 — Cold Start"
 
@@ -697,9 +697,9 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "ai-lb has received no requests in 5 minutes"
+          summary: "llb has received no requests in 5 minutes"
           description: >
-            No requests have been routed through ai-lb in the last 5 minutes.
+            No requests have been routed through llb in the last 5 minutes.
             Check if the service is reachable and if upstream clients are healthy.
 
       # ── High P99 latency ─────────────────────────────────────────────────
@@ -712,7 +712,7 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "ai-lb P99 latency above 10 seconds"
+          summary: "llb P99 latency above 10 seconds"
           description: >
             P99 request latency is {{ printf "%.1f" $value }}s, exceeding 10s threshold.
             Check backend node latencies and REQUEST_TIMEOUT_SECS config.
@@ -724,28 +724,28 @@ groups:
 
 ### 4.1 Cold Start (Full Startup from Zero)
 
-**Prerequisites:** Docker installed, `/etc/ai-lb/prod.env` exists, `/run/secrets/` populated,
-`/var/lib/ai-lb/redis/` directory exists.
+**Prerequisites:** Docker installed, `/etc/llb/prod.env` exists, `/run/secrets/` populated,
+`/var/lib/llb/redis/` directory exists.
 
 1. Create required directories:
    ```bash
-   sudo mkdir -p /var/lib/ai-lb/redis /var/log/ai-lb /etc/ai-lb
-   sudo chown -R 1001:root /var/log/ai-lb
+   sudo mkdir -p /var/lib/llb/redis /var/log/llb /etc/llb
+   sudo chown -R 1001:root /var/log/llb
    ```
 2. Populate secrets:
    ```bash
    echo "sk-ant-api03-XXXX" | sudo tee /run/secrets/anthropic_api_key > /dev/null
    sudo chmod 600 /run/secrets/anthropic_api_key
    ```
-3. Write `/etc/ai-lb/prod.env` from the template in Section 2.4.
+3. Write `/etc/llb/prod.env` from the template in Section 2.4.
 4. Copy Redis config:
    ```bash
-   sudo cp config/redis.prod.conf /etc/ai-lb/redis.prod.conf
+   sudo cp config/redis.prod.conf /etc/llb/redis.prod.conf
    ```
 5. Pull/build images:
    ```bash
-   docker build -f load_balancer/Dockerfile.prod -t localhost:5000/ai-lb:latest ./load_balancer
-   docker build -f monitor/Dockerfile -t localhost:5000/ai-lb-monitor:latest ./monitor
+   docker build -f load_balancer/Dockerfile.prod -t localhost:5000/llb:latest ./load_balancer
+   docker build -f monitor/Dockerfile -t localhost:5000/llb-monitor:latest ./monitor
    ```
 6. Start Redis first and wait for healthy:
    ```bash
@@ -783,21 +783,21 @@ groups:
 1. Build the new image:
    ```bash
    docker build -f load_balancer/Dockerfile.prod \
-     -t localhost:5000/ai-lb:candidate \
+     -t localhost:5000/llb:candidate \
      ./load_balancer
    ```
 2. Smoke-test the candidate image locally (non-prod port):
    ```bash
    docker run --rm -d --name ai_lb_candidate \
-     --env-file /etc/ai-lb/prod.env \
+     --env-file /etc/llb/prod.env \
      -p 18000:8000 \
-     localhost:5000/ai-lb:candidate
+     localhost:5000/llb:candidate
    curl -sf http://localhost:18000/health && echo "Candidate OK"
    docker stop ai_lb_candidate
    ```
 3. Tag candidate as latest:
    ```bash
-   docker tag localhost:5000/ai-lb:candidate localhost:5000/ai-lb:latest
+   docker tag localhost:5000/llb:candidate localhost:5000/llb:latest
    ```
 4. Pull the new image into the compose stack (no restart yet):
    ```bash
@@ -826,7 +826,7 @@ groups:
 8. Verify no error spike in Prometheus (check `AILBHighErrorRate` alert is not firing).
 9. Remove the candidate tag:
    ```bash
-   docker rmi localhost:5000/ai-lb:candidate
+   docker rmi localhost:5000/llb:candidate
    ```
 
 ### 4.3 Rollback Procedure
@@ -835,12 +835,12 @@ groups:
 
 1. Identify the previous image digest:
    ```bash
-   docker images localhost:5000/ai-lb --digests
+   docker images localhost:5000/llb --digests
    # Note the sha256 of the previous working image
    ```
 2. Tag the previous image as latest:
    ```bash
-   docker tag localhost:5000/ai-lb@sha256:<previous-digest> localhost:5000/ai-lb:latest
+   docker tag localhost:5000/llb@sha256:<previous-digest> localhost:5000/llb:latest
    ```
 3. Force-recreate the container with the rolled-back image:
    ```bash
@@ -866,13 +866,13 @@ groups:
 
 1. Start the new LLM backend server on the target host (e.g., LMStudio on port 1234).
 2. If using monitor (local scan): ensure `SCAN_HOSTS` includes the new host:port.
-   Update `/etc/ai-lb/prod.env` and restart monitor:
+   Update `/etc/llb/prod.env` and restart monitor:
    ```bash
-   # Edit /etc/ai-lb/prod.env: append new host to SCAN_HOSTS=...,newhost:1234
+   # Edit /etc/llb/prod.env: append new host to SCAN_HOSTS=...,newhost:1234
    docker compose -f docker-compose.yml -f docker-compose.prod.yml \
      --profile full restart monitor
    ```
-3. If using cloud backends: add the new backend to `CLOUD_BACKENDS` in `/etc/ai-lb/prod.env`:
+3. If using cloud backends: add the new backend to `CLOUD_BACKENDS` in `/etc/llb/prod.env`:
    ```bash
    # Append: ,newbackend=https://newhost/v1|/run/secrets/newbackend_key|openai
    docker compose -f docker-compose.yml -f docker-compose.prod.yml \
@@ -888,7 +888,7 @@ groups:
 **Removing a node:**
 
 1. Stop the backend server on the target host.
-2. Remove the node from `SCAN_HOSTS` or `CLOUD_BACKENDS` in `/etc/ai-lb/prod.env`.
+2. Remove the node from `SCAN_HOSTS` or `CLOUD_BACKENDS` in `/etc/llb/prod.env`.
 3. Manually evict the node from Redis to prevent stale routing (do this before restart):
    ```bash
    NODE="oldhost:1234"
@@ -938,9 +938,9 @@ automatic reset is not occurring due to a bug.
 7. Verify `ai_lb_circuit_breaker_open{node="hostname:port"}` returns 0 in `/metrics`.
 8. Monitor for 2 minutes to confirm the node stays healthy and CB does not re-open.
 
-### 4.6 Horizontal Scaling (Multiple ai-lb Instances Behind HAProxy)
+### 4.6 Horizontal Scaling (Multiple llb Instances Behind HAProxy)
 
-**Architecture:** Multiple ai-lb containers share the same Redis instance. All state (node
+**Architecture:** Multiple llb containers share the same Redis instance. All state (node
 health, metrics, circuit breakers, EWMA) is Redis-backed, so instances are stateless.
 
 **HAProxy configuration:**
@@ -973,18 +973,18 @@ backend ai_lb_pool
     server ailb3 127.0.0.1:8002 check inter 10s fall 3 rise 2
 ```
 
-**Procedure to add a second ai-lb instance:**
+**Procedure to add a second llb instance:**
 
 1. Start a second load_balancer container on port 8001 (same Redis, same prod.env):
    ```bash
    docker run -d \
      --name ai_lb_load_balancer_2 \
      --network host \
-     --env-file /etc/ai-lb/prod.env \
+     --env-file /etc/llb/prod.env \
      -e REDIS_HOST=localhost \
      -e REDIS_PORT=6379 \
      --restart always \
-     localhost:5000/ai-lb:latest \
+     localhost:5000/llb:latest \
      uvicorn load_balancer.main:app --host 0.0.0.0 --port 8001 --workers 2
    ```
 2. Verify the new instance is healthy:
@@ -1001,7 +1001,7 @@ backend ai_lb_pool
    echo "show info" | sudo socat stdio /run/haproxy/admin.sock | grep "CurrConns"
    ```
 
-**Note on state sharing:** All ai-lb instances read/write the same Redis keys. Circuit breaker
+**Note on state sharing:** All llb instances read/write the same Redis keys. Circuit breaker
 state, node health, EWMA tokens, and metric counters are visible across all instances. No
 instance-local state is maintained beyond in-process async tasks (hedging, plan execution).
 

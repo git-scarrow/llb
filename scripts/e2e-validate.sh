@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
-# E2E validation script for ai-lb Phases 1–3
+# E2E validation script for LLB Phases 1–3
 # Tests: capability routing, complexity routing, PLAN mode, RACE/hedging,
 #        response headers, circuit breaker
 # Usage: ./scripts/e2e-validate.sh [--no-configure] [--lb-url URL]
 #
 # Flags:
 #   --no-configure   Skip patching .env and restarting the LB (assume already configured)
-#   --lb-url URL     LB base URL (default: http://localhost:8001)
+#   --lb-url URL     LB base URL (default: http://localhost:$LLB_PORT)
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
 cd "$ROOT_DIR"
 
-LB_URL="http://localhost:8001"
+# Source .env for LLB_PORT if not already set
+[[ -f "$ROOT_DIR/.env" ]] && set -a && source "$ROOT_DIR/.env" && set +a
+LLB_PORT="${LLB_PORT:-${AI_LB_PORT:-8002}}"  # COMPAT: AI_LB_PORT fallback remove after 2026-06-01
+LB_URL="http://localhost:${LLB_PORT}"
 CONFIGURE=true
 
 for arg in "$@"; do
@@ -270,8 +273,8 @@ DEAD_NODE="dead-node.invalid:9999"
 MODEL_ID="circuit-test-model"
 
 # Register a dead node in Redis for a test model
-docker exec ai_lb_redis redis-cli SADD "nodes:healthy" "$DEAD_NODE" >/dev/null 2>&1 || true
-docker exec ai_lb_redis redis-cli SET "node:$DEAD_NODE:models" \
+docker compose exec -T redis redis-cli SADD "nodes:healthy" "$DEAD_NODE" >/dev/null 2>&1 || true
+docker compose exec -T redis redis-cli SET "node:$DEAD_NODE:models" \
   "{\"object\":\"list\",\"data\":[{\"id\":\"$MODEL_ID\",\"object\":\"model\"}]}" >/dev/null 2>&1 || true
 
 # Fire requests — the LB should trip the circuit breaker after threshold failures
@@ -279,7 +282,7 @@ BODY="{\"model\":\"$MODEL_ID\",\"messages\":[{\"role\":\"user\",\"content\":\"te
 cb_tripped=false
 for i in {1..5}; do
   req -- "$BODY"
-  if docker exec ai_lb_redis redis-cli EXISTS "circuit:$DEAD_NODE" 2>/dev/null | grep -q "^1$"; then
+  if docker compose exec -T redis redis-cli EXISTS "circuit:$DEAD_NODE" 2>/dev/null | grep -q "^1$"; then
     cb_tripped=true
     break
   fi
@@ -289,7 +292,7 @@ if $cb_tripped; then
   pass "Circuit breaker tripped for $DEAD_NODE after failures"
 else
   # Check if node got penalised instead
-  penalty=$(docker exec ai_lb_redis redis-cli EXISTS "penalty:$DEAD_NODE" 2>/dev/null || echo "0")
+  penalty=$(docker compose exec -T redis redis-cli EXISTS "penalty:$DEAD_NODE" 2>/dev/null || echo "0")
   if [[ "$penalty" == "1" ]]; then
     pass "Dead node penalised in Redis (failure penalty applied)"
   else
@@ -298,8 +301,8 @@ else
 fi
 
 # Clean up test node
-docker exec ai_lb_redis redis-cli SREM "nodes:healthy" "$DEAD_NODE" >/dev/null 2>&1 || true
-docker exec ai_lb_redis redis-cli DEL "node:$DEAD_NODE:models" >/dev/null 2>&1 || true
+docker compose exec -T redis redis-cli SREM "nodes:healthy" "$DEAD_NODE" >/dev/null 2>&1 || true
+docker compose exec -T redis redis-cli DEL "node:$DEAD_NODE:models" >/dev/null 2>&1 || true
 
 # ── Summary ───────────────────────────────────────────────────────────────
 echo ""

@@ -1,17 +1,17 @@
 """E2E test configuration and fixtures.
 
-All E2E tests are gated on the ``AI_LB_BASE_URL`` environment variable.
+All E2E tests are gated on the ``LLB_BASE_URL`` environment variable.
 If it is not set the entire suite is skipped so that CI does not fail
 without a live stack.
 
 Required environment variables:
-    AI_LB_BASE_URL   e.g. http://localhost:8000   (no trailing slash)
+    LLB_BASE_URL   e.g. http://localhost:8000   (no trailing slash)
 
 Optional environment variables:
-    AI_LB_REDIS_HOST   Redis host (default: localhost)
-    AI_LB_REDIS_PORT   Redis port (default: 6379)
-    AI_LB_MODEL        Model name to use in tests (default: auto-discovered)
-    AI_LB_HEALTH_TIMEOUT_SECS  Seconds to wait for /health to become green (default: 10)
+    LLB_REDIS_HOST   Redis host (default: localhost)
+    LLB_REDIS_PORT   Redis port (default: 6379)
+    LLB_MODEL        Model name to use in tests (default: auto-discovered)
+    LLB_HEALTH_TIMEOUT_SECS  Seconds to wait for /health to become green (default: 10)
 """
 
 from __future__ import annotations
@@ -27,15 +27,15 @@ import pytest
 # Guard: skip entire module/session when live stack is absent
 # ---------------------------------------------------------------------------
 
-_BASE_URL: Optional[str] = os.environ.get("AI_LB_BASE_URL", "").rstrip("/") or None
+_BASE_URL: Optional[str] = os.environ.get("LLB_BASE_URL", "").rstrip("/") or None
 
 
 def pytest_collection_modifyitems(config, items):
-    """Skip all e2e tests when AI_LB_BASE_URL is not set."""
+    """Skip all e2e tests when LLB_BASE_URL is not set."""
     if _BASE_URL:
         return
     skip_marker = pytest.mark.skip(
-        reason="AI_LB_BASE_URL not set – live stack required for e2e tests"
+        reason="LLB_BASE_URL not set – live stack required for e2e tests"
     )
     for item in items:
         if "e2e" in item.keywords:
@@ -51,7 +51,7 @@ def pytest_collection_modifyitems(config, items):
 def base_url() -> str:
     """Return the load-balancer base URL, skipping if not configured."""
     if not _BASE_URL:
-        pytest.skip("AI_LB_BASE_URL not set")
+        pytest.skip("LLB_BASE_URL not set")
     return _BASE_URL
 
 
@@ -67,8 +67,8 @@ def lb_client(base_url: str) -> httpx.Client:
 @pytest.fixture(scope="session")
 def redis_client():
     """Return a redis.Redis client for state inspection, or None if redis is unavailable."""
-    redis_host = os.environ.get("AI_LB_REDIS_HOST", "localhost")
-    redis_port = int(os.environ.get("AI_LB_REDIS_PORT", 6379))
+    redis_host = os.environ.get("LLB_REDIS_HOST", "localhost")
+    redis_port = int(os.environ.get("LLB_REDIS_PORT", 6379))
     try:
         import redis as _redis
 
@@ -84,10 +84,10 @@ def redis_client():
 def model_name(lb_client: httpx.Client) -> str:
     """Discover a model to use in tests.
 
-    Prefer ``AI_LB_MODEL`` env var; fall back to first model returned by
+    Prefer ``LLB_MODEL`` env var; fall back to first model returned by
     ``GET /v1/models``.
     """
-    explicit = os.environ.get("AI_LB_MODEL", "").strip()
+    explicit = os.environ.get("LLB_MODEL", "").strip()
     if explicit:
         return explicit
     resp = lb_client.get("/v1/models")
@@ -102,7 +102,7 @@ def wait_for_healthy(base_url: str):
     """Block until /health reports healthy (or timeout)."""
     if not _BASE_URL:
         return
-    timeout = float(os.environ.get("AI_LB_HEALTH_TIMEOUT_SECS", 10))
+    timeout = float(os.environ.get("LLB_HEALTH_TIMEOUT_SECS", 10))
     deadline = time.monotonic() + timeout
     last_exc = None
     while time.monotonic() < deadline:

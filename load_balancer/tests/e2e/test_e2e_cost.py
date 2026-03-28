@@ -6,7 +6,7 @@ Covers:
   - Redis key format matches the implementation in strategies.py
 
 Prerequisites (set in environment or skip):
-  - AI_LB_BASE_URL
+  - LLB_BASE_URL
   - P2C_BETA > 0 and BACKEND_COST_PER_TOKEN configured in the LB process
 
 If Redis is unavailable or P2C_BETA is 0 (default), EWMA-specific

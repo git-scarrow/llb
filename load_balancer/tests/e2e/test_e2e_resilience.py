@@ -7,13 +7,13 @@ Covers:
   - Failover: removing a node from Redis healthy set triggers re-routing
 
 Note: These tests require either:
-  a) Docker Compose control (``AI_LB_COMPOSE_SERVICE`` env var) to stop a
+  a) Docker Compose control (``LLB_COMPOSE_SERVICE`` env var) to stop a
      service and simulate node failure, OR
   b) Redis write access (``redis_client`` fixture) to manually manipulate
      node state.
 
 Tests that require docker control are automatically skipped when
-``AI_LB_COMPOSE_SERVICE`` is not set.
+``LLB_COMPOSE_SERVICE`` is not set.
 """
 
 import os
@@ -224,16 +224,16 @@ class TestFailover:
 class TestDockerComposeFailover:
     """Failover using docker-compose stop to simulate real node failure.
 
-    Requires ``AI_LB_COMPOSE_SERVICE`` env var (name of the compose service
+    Requires ``LLB_COMPOSE_SERVICE`` env var (name of the compose service
     to stop temporarily) and docker CLI access.  Skipped otherwise.
     """
 
     @pytest.fixture(autouse=True)
     def require_compose_service(self):
-        svc = os.environ.get("AI_LB_COMPOSE_SERVICE", "")
+        svc = os.environ.get("LLB_COMPOSE_SERVICE", "")
         if not svc:
             pytest.skip(
-                "AI_LB_COMPOSE_SERVICE not set – docker-compose failover tests skipped"
+                "LLB_COMPOSE_SERVICE not set – docker-compose failover tests skipped"
             )
         self._service = svc
 

@@ -1,5 +1,5 @@
 # config/prometheus.yml
-# Prometheus scrape configuration for ai-lb.
+# Prometheus scrape configuration for LLB.
 # Include this in your Prometheus config, or use as a standalone config:
 #   prometheus --config.file=config/prometheus.yml
 
@@ -8,10 +8,10 @@ global:
   evaluation_interval: 30s
 
 rule_files:
-  - "alerting/ai-lb.yml"
+  - "alerting/llb.yml"
 
 scrape_configs:
-  - job_name: 'ai-lb'
+  - job_name: 'llb'
     scrape_interval: 15s
     scrape_timeout: 10s
     static_configs:

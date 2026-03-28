@@ -51,7 +51,7 @@ class CLIPlanner:
         if OpenAI is None:
             raise RuntimeError("openai package not available")
         # Use the LB URL for the client
-        lb_url = os.getenv("AI_LB_URL", "http://localhost:8001")
+        lb_url = os.getenv("LLB_URL", os.getenv("AI_LB_URL", f"http://localhost:{os.getenv('LLB_PORT', os.getenv('AI_LB_PORT', '8002'))}"))  # COMPAT: AI_LB_* fallback remove after 2026-06-01
         self._client = OpenAI(base_url=f"{lb_url}/v1", api_key="sk-bridge")
         self._model = model
         self._max_tasks = max_tasks

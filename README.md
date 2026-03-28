@@ -1,4 +1,4 @@
-# AI-LB: AI Load Balancer
+# LLB: Large Language Balancer
 
 A modular, containerized load balancer for self-hosted Large Language Models (LLMs).
 
@@ -130,5 +130,5 @@ See the README in each service's directory for more details.
 
 ## MCP Server (for Any Agent)
 
-- An optional stdio MCP server exposes AI-LB tools/resources to any compliant agent.
+- An optional stdio MCP server exposes LLB tools/resources to any compliant agent.
 - See `mcp_server/README.md` for instructions and available tools/resources.

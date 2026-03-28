@@ -5,7 +5,6 @@ x-redis-env: &redis-env
 services:
   redis:
     image: "redis:alpine"
-    container_name: ai_lb_redis
     restart: unless-stopped
     network_mode: host
     volumes:
@@ -23,7 +22,6 @@ services:
     build:
       context: ./monitor
       network: host
-    container_name: ai_lb_monitor
     network_mode: host
     environment:
       <<: *redis-env
@@ -43,7 +41,6 @@ services:
     build:
       context: ./load_balancer
       network: host
-    container_name: ai_lb_load_balancer
     network_mode: host
     environment:
       <<: *redis-env
@@ -96,7 +93,7 @@ services:
     depends_on:
       - redis
     restart: unless-stopped
-    command: ["uvicorn", "load_balancer.main:app", "--host", "0.0.0.0", "--port", "8001"]
+    command: ["uvicorn", "load_balancer.main:app", "--host", "0.0.0.0", "--port", "${LLB_PORT:-8002}"]
     # Port mapping not needed in host mode, app must bind to port directly
     # ports:
     #   - "${LOAD_BALANCER_PORT:-8000}:8000"
@@ -106,7 +103,6 @@ services:
   # See: https://github.com/CaddyGlow/ccproxy-api
   ccproxy:
     image: ghcr.io/caddyglow/ccproxy-api:latest
-    container_name: ai_lb_ccproxy
     network_mode: host
     volumes:
       - ~/.config/ccproxy:/root/.config/ccproxy  # OAuth credentials (bind mount for host access)

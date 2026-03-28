@@ -20,11 +20,11 @@ from mcp.types import (
 )
 
 
-LB_URL = os.getenv("LB_URL", "http://localhost:8000")
+LB_URL = os.getenv("LLB_URL", os.getenv("AI_LB_URL", f"http://localhost:{os.getenv('LLB_PORT', os.getenv('AI_LB_PORT', '8002'))}"))  # COMPAT: AI_LB_* fallback remove after 2026-06-01
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 
-server = Server("ai-lb")
+server = Server("llb")
 
 
 async def _get_http() -> httpx.AsyncClient:
@@ -145,8 +145,8 @@ async def call_tool(request: CallToolRequest) -> CallToolResult:
 @server.list_resources()
 async def list_resources() -> ListResourcesResult:
     return ListResourcesResult(resources=[
-        Resource(uri="ai-lb/metrics", mimeType="text/plain"),
-        Resource(uri="ai-lb/health", mimeType="application/json"),
+        Resource(uri="llb/metrics", mimeType="text/plain"),
+        Resource(uri="llb/health", mimeType="application/json"),
     ])
 
 
@@ -154,10 +154,10 @@ async def list_resources() -> ListResourcesResult:
 async def read_resource(req: ReadResourceRequest) -> ReadResourceResult:
     uri = req.uri
     async with await _get_http() as http:
-        if uri == "ai-lb/metrics":
+        if uri == "llb/metrics":
             txt = (await http.get(f"{LB_URL}/metrics")).text
             return ReadResourceResult(contents=[{"uri": uri, "mimeType": "text/plain", "text": txt}])
-        if uri == "ai-lb/health":
+        if uri == "llb/health":
             txt = (await http.get(f"{LB_URL}/health")).text
             return ReadResourceResult(contents=[{"uri": uri, "mimeType": "application/json", "text": txt}])
     return ReadResourceResult(contents=[{"uri": uri, "mimeType": "text/plain", "text": "unknown resource"}])

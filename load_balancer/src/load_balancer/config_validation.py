@@ -5,7 +5,7 @@ import sys
 import json
 import logging
 
-log = logging.getLogger("ai_lb.config")
+log = logging.getLogger(__name__)
 
 
 class ConfigError(Exception):
@@ -96,7 +96,7 @@ def validate_config() -> None:
     if errors:
         msg = "\n\n".join(errors)
         log.critical(
-            "ai-lb failed config validation at startup. Fix the following:\n\n%s\n\n"
+            "LB failed config validation at startup. Fix the following:\n\n%s\n\n"
             "Exiting.",
             msg
         )

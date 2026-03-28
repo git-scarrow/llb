@@ -17,7 +17,7 @@ from rich.table import Table
 from rich.text import Text
 
 
-DEFAULT_LB = "http://localhost:8000"
+DEFAULT_LB = os.getenv("LLB_URL", os.getenv("AI_LB_URL", f"http://localhost:{os.getenv('LLB_PORT', os.getenv('AI_LB_PORT', '8002'))}"))  # COMPAT: AI_LB_* fallback remove after 2026-06-01
 
 # Rendering options (set via CLI flags in main())
 SHOW_JSON = False
@@ -153,7 +153,7 @@ def render_layout(model: str, nodes: Dict[str, NodeState]) -> Layout:
     layout.split_column(top, grid)
 
     # header table
-    t = Table(title=f"AI-LB Multi-Node Streaming — Model: {model}", show_header=True, header_style="bold")
+    t = Table(title=f"LLB Multi-Node Streaming — Model: {model}", show_header=True, header_style="bold")
     t.add_column("Node")
     t.add_column("Inflight")
     t.add_column("MaxConn")
@@ -431,7 +431,7 @@ def main():
     ap.add_argument("--pick-nodes", action="store_true", help="Interactive node picker")
     ap.add_argument("--require-all-nodes", action="store_true", help="Only list models available on all selected nodes")
     ap.add_argument("--filter-models", help="Substring to filter model list", default="")
-    ap.add_argument("--state-file", default=str(Path.home()/".ai-lb"/"tui_state.json"), help="Path to persist last selection")
+    ap.add_argument("--state-file", default=str(Path.home()/".llb"/"tui_state.json"), help="Path to persist last selection")
     ap.add_argument("--no-restore", action="store_true", help="Do not restore last selection from state file")
     ap.add_argument("--save-logs", help="Directory to save per-node stream logs")
     ap.add_argument("--linger-secs", type=float, default=0.0, help="Keep the UI visible for N seconds after streams finish")

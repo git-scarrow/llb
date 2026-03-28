@@ -4,10 +4,14 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
 cd "$ROOT_DIR"
 
+# Source .env for LLB_PORT if not already set
+[[ -f "$ROOT_DIR/.env" ]] && set -a && source "$ROOT_DIR/.env" && set +a
+LLB_PORT="${LLB_PORT:-${AI_LB_PORT:-8002}}"  # COMPAT: AI_LB_PORT fallback remove after 2026-06-01
+
 export COMPOSE_DOCKER_CLI_BUILD=1 DOCKER_BUILDKIT=1
 
 MODEL_ID="m"
-LB_URL="http://localhost:8001"
+LB_URL="http://localhost:${LLB_PORT}"
 STUB_PORT=9999
 STUB_PID=""
 
@@ -75,16 +79,16 @@ NODE1="node1:9998"
 NODE2="localhost:9999"
 
 echo "[ci-smoke] Seeding Redis model/node state..."
-docker exec -i ai_lb_redis redis-cli SADD nodes:healthy "$NODE1" "$NODE2" >/dev/null
-docker exec -i ai_lb_redis redis-cli SET "node:$NODE1:models" '{"object":"list","data":[{"id":"'"$MODEL_ID"'","object":"model"}]}' >/dev/null
-docker exec -i ai_lb_redis redis-cli SET "node:$NODE2:models" '{"object":"list","data":[{"id":"'"$MODEL_ID"'","object":"model"}]}' >/dev/null
-docker exec -i ai_lb_redis redis-cli SET "session:s:$MODEL_ID" "$NODE1" >/dev/null
+docker compose exec -T redis redis-cli SADD nodes:healthy "$NODE1" "$NODE2" >/dev/null
+docker compose exec -T redis redis-cli SET "node:$NODE1:models" '{"object":"list","data":[{"id":"'"$MODEL_ID"'","object":"model"}]}' >/dev/null
+docker compose exec -T redis redis-cli SET "node:$NODE2:models" '{"object":"list","data":[{"id":"'"$MODEL_ID"'","object":"model"}]}' >/dev/null
+docker compose exec -T redis redis-cli SET "session:s:$MODEL_ID" "$NODE1" >/dev/null
 
 echo "[ci-smoke] Forcing capacity on node1; freeing node2..."
-docker exec -i ai_lb_redis redis-cli SET "node:$NODE1:maxconn" 1 >/dev/null
-docker exec -i ai_lb_redis redis-cli SET "node:$NODE1:inflight" 1 >/dev/null
-docker exec -i ai_lb_redis redis-cli DEL "node:$NODE2:maxconn" >/dev/null
-docker exec -i ai_lb_redis redis-cli SET "node:$NODE2:inflight" 0 >/dev/null
+docker compose exec -T redis redis-cli SET "node:$NODE1:maxconn" 1 >/dev/null
+docker compose exec -T redis redis-cli SET "node:$NODE1:inflight" 1 >/dev/null
+docker compose exec -T redis redis-cli DEL "node:$NODE2:maxconn" >/dev/null
+docker compose exec -T redis redis-cli SET "node:$NODE2:inflight" 0 >/dev/null
 
 round=1
 ok=0
@@ -107,13 +111,13 @@ while (( round <= 3 )); do
     fi
     sleep 1
   done
-  REQS=$(echo "$METRICS" | awk '/^ai_lb_requests_total /{print $2}')
-  HEDGES=$(echo "$METRICS" | awk '/^ai_lb_hedges_total /{print $2}')
-  WINS_MODEL=$(echo "$METRICS" | awk -v m="$MODEL_ID" '$1 ~ /^ai_lb_hedge_wins_total/ && $0 ~ "model=\""m"\"" {print $2}')
+  REQS=$(echo "$METRICS" | awk '/^llb_requests_total /{print $2}')
+  HEDGES=$(echo "$METRICS" | awk '/^llb_hedges_total /{print $2}')
+  WINS_MODEL=$(echo "$METRICS" | awk -v m="$MODEL_ID" '$1 ~ /^llb_hedge_wins_total/ && $0 ~ "model=\""m"\"" {print $2}')
 
-  echo "[ci-smoke] ai_lb_requests_total=${REQS:-NA}"
-  echo "[ci-smoke] ai_lb_hedges_total=${HEDGES:-0}"
-  echo "[ci-smoke] ai_lb_hedge_wins_total{model=\"$MODEL_ID\"}=${WINS_MODEL:-0}"
+  echo "[ci-smoke] llb_requests_total=${REQS:-NA}"
+  echo "[ci-smoke] llb_hedges_total=${HEDGES:-0}"
+  echo "[ci-smoke] llb_hedge_wins_total{model=\"$MODEL_ID\"}=${WINS_MODEL:-0}"
 
   if [[ -n "$HEDGES" ]] && (( ${HEDGES%%.*} >= 1 )) && [[ -n "${WINS_MODEL:-}" ]] && (( ${WINS_MODEL%%.*} >= 1 )); then
     ok=1

@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ai_lb_monitor"
+name = "llb_monitor"
 version = "0.1.0"
-description = "The discovery and health monitoring service for the AI Load Balancer."
+description = "The discovery and health monitoring service for the Large Language Balancer."
 authors = [{name = "AI Assistant"}]
 license = {file = "LICENSE"}
 classifiers = [

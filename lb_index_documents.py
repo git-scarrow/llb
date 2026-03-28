@@ -9,7 +9,7 @@ from tqdm import tqdm
 # Configuration
 DOCS_DIR = "/home/sam/Documents"
 DB_PATH = "/home/sam/.openclaw/memory/documents.db"
-LB_URL = os.getenv("LB_URL", "http://localhost:8001")
+LB_URL = os.getenv("LLB_URL", os.getenv("AI_LB_URL", f"http://localhost:{os.getenv('LLB_PORT', os.getenv('AI_LB_PORT', '8002'))}"))  # COMPAT: AI_LB_* fallback remove after 2026-06-01
 MODEL = os.getenv("EMB_MODEL", "text-embedding-nomic-embed-text-v1.5")
 BATCH_SIZE = 10
 

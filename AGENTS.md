@@ -56,7 +56,7 @@ Maintain a professional, organized approach to all planning activities.
 The story-engine is a complex narrative generation and management system with multiple components including AI integration, database management, and various story generation tools.
 
 ## Key Components Discovered
-- **AI Load Balancer** (`ai-lb/`) - Manages AI model interactions
+- **Large Language Balancer** (`llb/`) - Manages AI model interactions
 - **Database Integration** - Oracle database connectivity and schema management
 - **Story Generation** - Various generation error logs indicate active development
 - **Benchmarking** (`bench/`) - Performance testing capabilities  

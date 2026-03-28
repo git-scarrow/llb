@@ -1,4 +1,4 @@
-name: ai-lb hedging smoke
+name: llb hedging smoke
 
 on:
   pull_request:

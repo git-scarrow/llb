@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import List
 
 
-DEFAULT_LB_URL = "http://127.0.0.1:8000"
+DEFAULT_LB_URL = f"http://127.0.0.1:{os.getenv('LLB_PORT', os.getenv('AI_LB_PORT', '8002'))}"  # COMPAT: AI_LB_PORT fallback remove after 2026-06-01
 LB_TIMEOUT_SECS = 2.0
 
 
@@ -35,7 +35,7 @@ def _resolve_lb_target(url: str) -> tuple[str, int]:
         url = f"http://{url}"
     parsed = urlparse(url)
     if not parsed.hostname:
-        raise ValueError(f"Invalid AI_LB_URL: {url}")
+        raise ValueError(f"Invalid LLB_URL: {url}")
     if parsed.port is not None:
         return parsed.hostname, parsed.port
     if parsed.scheme == "https":
@@ -47,12 +47,12 @@ def _check_lb(url: str) -> CheckResult:
     try:
         host, port = _resolve_lb_target(url)
     except ValueError as exc:
-        return CheckResult(label="ai-lb", ok=False, detail=str(exc))
+        return CheckResult(label="llb", ok=False, detail=str(exc))
     try:
         with socket.create_connection((host, port), timeout=LB_TIMEOUT_SECS):
-            return CheckResult(label=f"ai-lb {host}:{port}", ok=True, detail=f"reachable ({url})")
+            return CheckResult(label=f"llb {host}:{port}", ok=True, detail=f"reachable ({url})")
     except OSError as exc:
-        return CheckResult(label=f"ai-lb {host}:{port}", ok=False, detail=f"{exc} ({url})")
+        return CheckResult(label=f"llb {host}:{port}", ok=False, detail=f"{exc} ({url})")
 
 
 def _check_command(env_var: str) -> CheckResult:
@@ -88,7 +88,7 @@ def _print_report(results: List[CheckResult]) -> bool:
 
 
 def main() -> int:
-    lb_url = os.getenv("AI_LB_URL", DEFAULT_LB_URL)
+    lb_url = os.getenv("LLB_URL", os.getenv("AI_LB_URL", DEFAULT_LB_URL))  # COMPAT: AI_LB_URL fallback remove after 2026-06-01
     results = [
         _check_import("httpx"),
         _check_import("openai"),

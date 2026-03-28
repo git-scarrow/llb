@@ -1,4 +1,4 @@
-# Hybrid Agent Client (agent)
+# LLB Hybrid Agent Client (agent)
 
 User manual for the Hybrid Agent Client packaged under `agent/`.
 

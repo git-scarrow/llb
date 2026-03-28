@@ -1,11 +1,12 @@
 import json
+import os
 import threading
 import time
 from typing import List
 
 import requests
 
-LB = "http://localhost:8000"
+LB = os.getenv("LLB_URL", os.getenv("AI_LB_URL", f"http://localhost:{os.getenv('LLB_PORT', os.getenv('AI_LB_PORT', '8002'))}"))  # COMPAT: AI_LB_* fallback remove after 2026-06-01
 
 
 def get_model() -> str:
@@ -48,7 +49,7 @@ def scrape_inflight(samples: int = 8, delay: float = 0.5) -> List[str]:
     for _ in range(samples):
         try:
             text = requests.get(f"{LB}/metrics", timeout=5).text
-            lines = [ln for ln in text.splitlines() if ln.startswith("ai_lb_inflight") or ln.startswith("ai_lb_up")]
+            lines = [ln for ln in text.splitlines() if ln.startswith("llb_inflight") or ln.startswith("llb_up")]
             out.append("\n".join(lines))
         except Exception as e:
             out.append(f"metrics error: {e}")
@@ -73,7 +74,7 @@ def main():
 
     # Sample metrics while requests are in-flight
     snapshots = scrape_inflight()
-    print("\nMetrics snapshots (ai_lb_up + ai_lb_inflight):")
+    print("\nMetrics snapshots (llb_up + llb_inflight):")
     for s in snapshots:
         print("---\n" + s)
 

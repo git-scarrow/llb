@@ -3,10 +3,10 @@
 # Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile full up -d
 #
 # Prerequisites:
-#   - /etc/ai-lb/prod.env populated (see docs/ds7-production-deployment-spec.md §2.4)
+#   - /etc/llb/prod.env populated (see docs/ds7-production-deployment-spec.md §2.4)
 #   - /run/secrets/anthropic_api_key and /run/secrets/openai_api_key created (chmod 600)
-#   - /var/lib/ai-lb/redis/ directory exists and is writable by the redis container
-#   - /var/log/ai-lb/ directory exists and is writable by uid 1001
+#   - /var/lib/llb/redis/ directory exists and is writable by the redis container
+#   - /var/log/llb/ directory exists and is writable by uid 1001
 
 x-redis-env: &redis-env
   REDIS_HOST: localhost
@@ -21,7 +21,6 @@ secrets:
 services:
   redis:
     image: "redis:7-alpine"
-    container_name: ai_lb_redis
     restart: always
     network_mode: host
     volumes:
@@ -36,11 +35,10 @@ services:
       start_period: 10s
 
   monitor:
-    image: "localhost:5000/ai-lb-monitor:latest"
-    container_name: ai_lb_monitor
+    image: "localhost:5000/llb-monitor:latest"
     network_mode: host
     restart: always
-    env_file: /etc/ai-lb/prod.env
+    env_file: /etc/llb/prod.env
     environment:
       <<: *redis-env
     depends_on:
@@ -49,11 +47,10 @@ services:
     profiles: ["full"]
 
   load_balancer:
-    image: "localhost:5000/ai-lb:latest"
-    container_name: ai_lb_load_balancer
+    image: "localhost:5000/llb:latest"
     network_mode: host
     restart: always
-    env_file: /etc/ai-lb/prod.env
+    env_file: /etc/llb/prod.env
     environment:
       <<: *redis-env
       # Secrets are mounted as files — NOT passed as env vars.
@@ -76,4 +73,4 @@ volumes:
     driver_opts:
       type: none
       o: bind
-      device: /var/lib/ai-lb/redis
+      device: /var/lib/llb/redis

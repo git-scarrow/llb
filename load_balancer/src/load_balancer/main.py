@@ -14,6 +14,7 @@ import asyncio
 from contextlib import asynccontextmanager
 
 from . import config
+from .constants import METRIC_PREFIX
 from .request_validation import sanitize_chat_request, sanitize_embeddings_request
 from .routing.strategies import get_routing_strategy, ComplexityRoutingStrategy
 from .execution import (
@@ -81,11 +82,11 @@ async def lifespan(app: FastAPI):
         logger.info("Load balancer shut down.")
 
 
-app = FastAPI(title="AI Load Balancer", lifespan=lifespan)
+app = FastAPI(title="Large Language Balancer", lifespan=lifespan)
 redis_client = None
 http_client = None
 router = None
-logger = logging.getLogger("ai_lb")
+logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 # Helper to resolve circuit breaker cooldown consistently across legacy and new config
@@ -3405,35 +3406,36 @@ async def health_check(response: Response):
 @app.get("/metrics")
 async def metrics():
     """Prometheus-style metrics exposition without external deps."""
+    P = f"{METRIC_PREFIX}_"
     lines = []
-    lines.append("# HELP ai_lb_requests_total Total requests handled by the LB")
-    lines.append("# TYPE ai_lb_requests_total counter")
+    lines.append(f"# HELP {P}requests_total Total requests handled by the LB")
+    lines.append(f"# TYPE {P}requests_total counter")
     total = await redis_client.get("lb:requests_total")
-    lines.append(f"ai_lb_requests_total {int(total) if total else 0}")
+    lines.append(f"{P}requests_total {int(total) if total else 0}")
 
     healthy = await redis_client.smembers("nodes:healthy")
-    lines.append("# HELP ai_lb_up Up status of nodes (1 healthy, 0 otherwise)")
-    lines.append("# TYPE ai_lb_up gauge")
+    lines.append(f"# HELP {P}up Up status of nodes (1 healthy, 0 otherwise)")
+    lines.append(f"# TYPE {P}up gauge")
     for n in healthy:
-        lines.append(f'ai_lb_up{{node="{n}"}} 1')
+        lines.append(f'{P}up{{node="{n}"}} 1')
 
-    lines.append("# HELP ai_lb_inflight Current in-flight requests per node")
-    lines.append("# TYPE ai_lb_inflight gauge")
+    lines.append(f"# HELP {P}inflight Current in-flight requests per node")
+    lines.append(f"# TYPE {P}inflight gauge")
     for n in healthy:
         inflight = await redis_client.get(f"node:{n}:inflight")
-        lines.append(f'ai_lb_inflight{{node="{n}"}} {int(inflight) if inflight else 0}')
+        lines.append(f'{P}inflight{{node="{n}"}} {int(inflight) if inflight else 0}')
 
-    lines.append("# HELP ai_lb_failures Recent failure count per node")
-    lines.append("# TYPE ai_lb_failures gauge")
+    lines.append(f"# HELP {P}failures Recent failure count per node")
+    lines.append(f"# TYPE {P}failures gauge")
     for n in healthy:
         failures = await redis_client.get(f"node:{n}:failures")
-        lines.append(f'ai_lb_failures{{node="{n}"}} {int(failures) if failures else 0}')
+        lines.append(f'{P}failures{{node="{n}"}} {int(failures) if failures else 0}')
 
     # Failovers total (overall and per model)
-    lines.append("# HELP ai_lb_failovers_total Total failovers across all requests")
-    lines.append("# TYPE ai_lb_failovers_total counter")
+    lines.append(f"# HELP {P}failovers_total Total failovers across all requests")
+    lines.append(f"# TYPE {P}failovers_total counter")
     total_failovers = await redis_client.get("lb:failovers_total")
-    lines.append(f"ai_lb_failovers_total {int(total_failovers) if total_failovers else 0}")
+    lines.append(f"{P}failovers_total {int(total_failovers) if total_failovers else 0}")
     # Per-model failovers
     # We don't track model list centrally; infer from keys stored
     # by scanning models in latency series and model failover keys indirectly.
@@ -3449,30 +3451,30 @@ async def metrics():
     for m in models:
         mf = await redis_client.get(f"lb:model:{m}:failovers_total")
         if mf:
-            lines.append(f'ai_lb_failovers_total{{model="{m}"}} {int(mf)}')
+            lines.append(f'{P}failovers_total{{model="{m}"}} {int(mf)}')
 
     # Rate limit metrics
-    lines.append("# HELP ai_lb_rate_limits_total Total rate limit (429) responses")
-    lines.append("# TYPE ai_lb_rate_limits_total counter")
+    lines.append(f"# HELP {P}rate_limits_total Total rate limit (429) responses")
+    lines.append(f"# TYPE {P}rate_limits_total counter")
     rate_limits_total = await redis_client.get("lb:rate_limits_total")
-    lines.append(f"ai_lb_rate_limits_total {int(rate_limits_total) if rate_limits_total else 0}")
+    lines.append(f"{P}rate_limits_total {int(rate_limits_total) if rate_limits_total else 0}")
 
     # Per-node rate limits
-    lines.append("# HELP ai_lb_rate_limits Rate limit counts per node")
-    lines.append("# TYPE ai_lb_rate_limits counter")
+    lines.append(f"# HELP {P}rate_limits Rate limit counts per node")
+    lines.append(f"# TYPE {P}rate_limits counter")
     for n in healthy:
         rl = await redis_client.get(f"lb:rate_limits:{n}")
         if rl:
-            lines.append(f'ai_lb_rate_limits{{node="{n}"}} {int(rl)}')
+            lines.append(f'{P}rate_limits{{node="{n}"}} {int(rl)}')
 
     # Hedging metrics
-    lines.append("# HELP ai_lb_hedges_total Total hedged duplicate attempts")
-    lines.append("# TYPE ai_lb_hedges_total counter")
+    lines.append(f"# HELP {P}hedges_total Total hedged duplicate attempts")
+    lines.append(f"# TYPE {P}hedges_total counter")
     hedges_total = await redis_client.get("lb:hedges_total")
-    lines.append(f"ai_lb_hedges_total {int(hedges_total) if hedges_total else 0}")
+    lines.append(f"{P}hedges_total {int(hedges_total) if hedges_total else 0}")
 
-    lines.append("# HELP ai_lb_hedge_wins Hedge wins per model/node")
-    lines.append("# TYPE ai_lb_hedge_wins counter")
+    lines.append(f"# HELP {P}hedge_wins Hedge wins per model/node")
+    lines.append(f"# TYPE {P}hedge_wins counter")
     # Infer winners by scanning known latency series for keys
     if series:
         for s in series:
@@ -3482,11 +3484,11 @@ async def metrics():
                 continue
             w = await redis_client.get(f"lb:hedge_wins:{s}")
             if w:
-                lines.append(f'ai_lb_hedge_wins{{model="{m}",node="{n}"}} {int(w)}')
+                lines.append(f'{P}hedge_wins{{model="{m}",node="{n}"}} {int(w)}')
 
     # Latency histogram per model and node
-    lines.append("# HELP ai_lb_latency_seconds Request latency histogram per model/node")
-    lines.append("# TYPE ai_lb_latency_seconds histogram")
+    lines.append(f"# HELP {P}latency_seconds Request latency histogram per model/node")
+    lines.append(f"# TYPE {P}latency_seconds histogram")
     # Iterate known series
     for s in series:
         try:
@@ -3499,17 +3501,17 @@ async def metrics():
             v = int(val) if val else 0
             cumulative = v  # already stored as cumulative
             le_str = "+Inf" if le == float("inf") else ("%.2f" % le).rstrip('0').rstrip('.')
-            lines.append(f'ai_lb_latency_seconds_bucket{{model="{m}",node="{n}",le="{le_str}"}} {cumulative}')
+            lines.append(f'{P}latency_seconds_bucket{{model="{m}",node="{n}",le="{le_str}"}} {cumulative}')
         s_sum = await redis_client.get(f"lb:latency_sum:{s}")
         s_cnt = await redis_client.get(f"lb:latency_count:{s}")
-        lines.append(f'ai_lb_latency_seconds_sum{{model="{m}",node="{n}"}} {float(s_sum) if s_sum else 0.0}')
-        lines.append(f'ai_lb_latency_seconds_count{{model="{m}",node="{n}"}} {int(s_cnt) if s_cnt else 0}')
+        lines.append(f'{P}latency_seconds_sum{{model="{m}",node="{n}"}} {float(s_sum) if s_sum else 0.0}')
+        lines.append(f'{P}latency_seconds_count{{model="{m}",node="{n}"}} {int(s_cnt) if s_cnt else 0}')
 
     # Stream TTFB histogram
     ttfb_series = await redis_client.smembers("lb:stream_ttfb_series")
     if ttfb_series:
-        lines.append("# HELP ai_lb_stream_ttfb_seconds Time-to-first-byte for streaming requests")
-        lines.append("# TYPE ai_lb_stream_ttfb_seconds histogram")
+        lines.append(f"# HELP {P}stream_ttfb_seconds Time-to-first-byte for streaming requests")
+        lines.append(f"# TYPE {P}stream_ttfb_seconds histogram")
         for s in ttfb_series:
             try:
                 m, n = s.split("|", 1)
@@ -3519,17 +3521,17 @@ async def metrics():
                 val = await redis_client.get(f"lb:stream_ttfb_bucket:{s}:{le}")
                 v = int(val) if val else 0
                 le_str = "+Inf" if le == float("inf") else ("%.2f" % le).rstrip('0').rstrip('.')
-                lines.append(f'ai_lb_stream_ttfb_seconds_bucket{{model="{m}",node="{n}",le="{le_str}"}} {v}')
+                lines.append(f'{P}stream_ttfb_seconds_bucket{{model="{m}",node="{n}",le="{le_str}"}} {v}')
             s_sum = await redis_client.get(f"lb:stream_ttfb_sum:{s}")
             s_cnt = await redis_client.get(f"lb:stream_ttfb_count:{s}")
-            lines.append(f'ai_lb_stream_ttfb_seconds_sum{{model="{m}",node="{n}"}} {float(s_sum) if s_sum else 0.0}')
-            lines.append(f'ai_lb_stream_ttfb_seconds_count{{model="{m}",node="{n}"}} {int(s_cnt) if s_cnt else 0}')
+            lines.append(f'{P}stream_ttfb_seconds_sum{{model="{m}",node="{n}"}} {float(s_sum) if s_sum else 0.0}')
+            lines.append(f'{P}stream_ttfb_seconds_count{{model="{m}",node="{n}"}} {int(s_cnt) if s_cnt else 0}')
 
     # Stream duration histogram
     dur_series = await redis_client.smembers("lb:stream_duration_series")
     if dur_series:
-        lines.append("# HELP ai_lb_stream_duration_seconds Total stream duration for streaming requests")
-        lines.append("# TYPE ai_lb_stream_duration_seconds histogram")
+        lines.append(f"# HELP {P}stream_duration_seconds Total stream duration for streaming requests")
+        lines.append(f"# TYPE {P}stream_duration_seconds histogram")
         for s in dur_series:
             try:
                 m, n = s.split("|", 1)
@@ -3539,112 +3541,112 @@ async def metrics():
                 val = await redis_client.get(f"lb:stream_duration_bucket:{s}:{le}")
                 v = int(val) if val else 0
                 le_str = "+Inf" if le == float("inf") else ("%.2f" % le).rstrip('0').rstrip('.')
-                lines.append(f'ai_lb_stream_duration_seconds_bucket{{model="{m}",node="{n}",le="{le_str}"}} {v}')
+                lines.append(f'{P}stream_duration_seconds_bucket{{model="{m}",node="{n}",le="{le_str}"}} {v}')
             s_sum = await redis_client.get(f"lb:stream_duration_sum:{s}")
             s_cnt = await redis_client.get(f"lb:stream_duration_count:{s}")
-            lines.append(f'ai_lb_stream_duration_seconds_sum{{model="{m}",node="{n}"}} {float(s_sum) if s_sum else 0.0}')
-            lines.append(f'ai_lb_stream_duration_seconds_count{{model="{m}",node="{n}"}} {int(s_cnt) if s_cnt else 0}')
+            lines.append(f'{P}stream_duration_seconds_sum{{model="{m}",node="{n}"}} {float(s_sum) if s_sum else 0.0}')
+            lines.append(f'{P}stream_duration_seconds_count{{model="{m}",node="{n}"}} {int(s_cnt) if s_cnt else 0}')
 
     # Aggregate hedge wins per model
     try:
         models = await redis_client.smembers("lb:hedge_wins_models")
-        lines.append("# HELP ai_lb_hedge_wins_total Hedge wins per model")
-        lines.append("# TYPE ai_lb_hedge_wins_total counter")
+        lines.append(f"# HELP {P}hedge_wins_total Hedge wins per model")
+        lines.append(f"# TYPE {P}hedge_wins_total counter")
         for m in models:
             val = await redis_client.get(f"lb:hedge_wins_model:{m}")
             v = int(val) if val else 0
-            lines.append(f'ai_lb_hedge_wins_total{{model="{m}"}} {v}')
+            lines.append(f'{P}hedge_wins_total{{model="{m}"}} {v}')
     except Exception:
         pass
 
     # Multi-backend execution metrics
-    lines.append("# HELP ai_lb_multi_exec_total Total multi-backend execution requests by mode")
-    lines.append("# TYPE ai_lb_multi_exec_total counter")
+    lines.append(f"# HELP {P}multi_exec_total Total multi-backend execution requests by mode")
+    lines.append(f"# TYPE {P}multi_exec_total counter")
     multi_total = await redis_client.get("lb:multi_exec_total")
-    lines.append(f"ai_lb_multi_exec_total {int(multi_total) if multi_total else 0}")
+    lines.append(f"{P}multi_exec_total {int(multi_total) if multi_total else 0}")
     for mode in ("race", "all", "sequence", "consensus", "plan"):
         val = await redis_client.get(f"lb:multi_exec_total:{mode}")
         if val:
-            lines.append(f'ai_lb_multi_exec_total{{mode="{mode}"}} {int(val)}')
+            lines.append(f'{P}multi_exec_total{{mode="{mode}"}} {int(val)}')
 
-    lines.append("# HELP ai_lb_multi_exec_backends Backends attempted per multi-exec request by mode")
-    lines.append("# TYPE ai_lb_multi_exec_backends summary")
+    lines.append(f"# HELP {P}multi_exec_backends Backends attempted per multi-exec request by mode")
+    lines.append(f"# TYPE {P}multi_exec_backends summary")
     for mode in ("race", "all", "sequence", "consensus", "plan"):
         s_sum = await redis_client.get(f"lb:multi_exec_backends_sum:{mode}")
         s_cnt = await redis_client.get(f"lb:multi_exec_backends_count:{mode}")
         if s_cnt and int(s_cnt) > 0:
-            lines.append(f'ai_lb_multi_exec_backends_sum{{mode="{mode}"}} {int(s_sum) if s_sum else 0}')
-            lines.append(f'ai_lb_multi_exec_backends_count{{mode="{mode}"}} {int(s_cnt)}')
+            lines.append(f'{P}multi_exec_backends_sum{{mode="{mode}"}} {int(s_sum) if s_sum else 0}')
+            lines.append(f'{P}multi_exec_backends_count{{mode="{mode}"}} {int(s_cnt)}')
 
-    lines.append("# HELP ai_lb_multi_exec_succeeded Backends that succeeded per multi-exec request by mode")
-    lines.append("# TYPE ai_lb_multi_exec_succeeded counter")
+    lines.append(f"# HELP {P}multi_exec_succeeded Backends that succeeded per multi-exec request by mode")
+    lines.append(f"# TYPE {P}multi_exec_succeeded counter")
     for mode in ("race", "all", "sequence", "consensus", "plan"):
         val = await redis_client.get(f"lb:multi_exec_succeeded_sum:{mode}")
         if val:
-            lines.append(f'ai_lb_multi_exec_succeeded{{mode="{mode}"}} {int(val)}')
+            lines.append(f'{P}multi_exec_succeeded{{mode="{mode}"}} {int(val)}')
 
     # Consensus-specific metrics
-    lines.append("# HELP ai_lb_consensus_total Total consensus requests")
-    lines.append("# TYPE ai_lb_consensus_total counter")
+    lines.append(f"# HELP {P}consensus_total Total consensus requests")
+    lines.append(f"# TYPE {P}consensus_total counter")
     consensus_total = await redis_client.get("lb:consensus_total")
-    lines.append(f"ai_lb_consensus_total {int(consensus_total) if consensus_total else 0}")
+    lines.append(f"{P}consensus_total {int(consensus_total) if consensus_total else 0}")
 
     # Per-model consensus totals
     consensus_models = await redis_client.smembers("lb:consensus_models")
     for model in consensus_models:
         val = await redis_client.get(f"lb:consensus_total:{model}")
         if val:
-            lines.append(f'ai_lb_consensus_total{{model="{model}"}} {int(val)}')
+            lines.append(f'{P}consensus_total{{model="{model}"}} {int(val)}')
 
     # Consensus agreements/disagreements
-    lines.append("# HELP ai_lb_consensus_agreements Total consensus agreements (unanimous)")
-    lines.append("# TYPE ai_lb_consensus_agreements counter")
+    lines.append(f"# HELP {P}consensus_agreements Total consensus agreements (unanimous)")
+    lines.append(f"# TYPE {P}consensus_agreements counter")
     agreements = await redis_client.get("lb:consensus_agreements")
-    lines.append(f"ai_lb_consensus_agreements {int(agreements) if agreements else 0}")
+    lines.append(f"{P}consensus_agreements {int(agreements) if agreements else 0}")
 
-    lines.append("# HELP ai_lb_consensus_disagreements Total consensus disagreements (not unanimous)")
-    lines.append("# TYPE ai_lb_consensus_disagreements counter")
+    lines.append(f"# HELP {P}consensus_disagreements Total consensus disagreements (not unanimous)")
+    lines.append(f"# TYPE {P}consensus_disagreements counter")
     disagreements = await redis_client.get("lb:consensus_disagreements")
-    lines.append(f"ai_lb_consensus_disagreements {int(disagreements) if disagreements else 0}")
+    lines.append(f"{P}consensus_disagreements {int(disagreements) if disagreements else 0}")
 
     # Per-model agreements/disagreements
     for model in consensus_models:
         agree_val = await redis_client.get(f"lb:consensus_agreements:{model}")
         if agree_val:
-            lines.append(f'ai_lb_consensus_agreements{{model="{model}"}} {int(agree_val)}')
+            lines.append(f'{P}consensus_agreements{{model="{model}"}} {int(agree_val)}')
         disagree_val = await redis_client.get(f"lb:consensus_disagreements:{model}")
         if disagree_val:
-            lines.append(f'ai_lb_consensus_disagreements{{model="{model}"}} {int(disagree_val)}')
+            lines.append(f'{P}consensus_disagreements{{model="{model}"}} {int(disagree_val)}')
 
     # Agreement count distribution (histogram of how many backends agreed)
-    lines.append("# HELP ai_lb_consensus_agreement_count Agreement count distribution")
-    lines.append("# TYPE ai_lb_consensus_agreement_count counter")
+    lines.append(f"# HELP {P}consensus_agreement_count Agreement count distribution")
+    lines.append(f"# TYPE {P}consensus_agreement_count counter")
     for count in (0, 1, 2, 3):
         val = await redis_client.get(f"lb:consensus_agreement:{count}")
         if val:
-            lines.append(f'ai_lb_consensus_agreement_count{{count="{count}"}} {int(val)}')
+            lines.append(f'{P}consensus_agreement_count{{count="{count}"}} {int(val)}')
 
     # Per-model agreement counts
     for model in consensus_models:
         for count in (0, 1, 2, 3):
             val = await redis_client.get(f"lb:consensus_agreement:{model}:{count}")
             if val:
-                lines.append(f'ai_lb_consensus_agreement_count{{model="{model}",count="{count}"}} {int(val)}')
+                lines.append(f'{P}consensus_agreement_count{{model="{model}",count="{count}"}} {int(val)}')
 
     # Comparison type distribution
-    lines.append("# HELP ai_lb_consensus_comparison_type Comparison type used for consensus")
-    lines.append("# TYPE ai_lb_consensus_comparison_type counter")
+    lines.append(f"# HELP {P}consensus_comparison_type Comparison type used for consensus")
+    lines.append(f"# TYPE {P}consensus_comparison_type counter")
     for comp_type in ("hash", "text", "tool_calls", "single", "none"):
         val = await redis_client.get(f"lb:consensus_comparison:{comp_type}")
         if val:
-            lines.append(f'ai_lb_consensus_comparison_type{{type="{comp_type}"}} {int(val)}')
+            lines.append(f'{P}consensus_comparison_type{{type="{comp_type}"}} {int(val)}')
 
     # Per-model comparison types
     for model in consensus_models:
         for comp_type in ("hash", "text", "tool_calls", "single", "none"):
             val = await redis_client.get(f"lb:consensus_comparison:{model}:{comp_type}")
             if val:
-                lines.append(f'ai_lb_consensus_comparison_type{{model="{model}",type="{comp_type}"}} {int(val)}')
+                lines.append(f'{P}consensus_comparison_type{{model="{model}",type="{comp_type}"}} {int(val)}')
 
     content = "\n".join(lines) + "\n"
     return Response(content=content, media_type="text/plain; version=0.0.4; charset=utf-8")

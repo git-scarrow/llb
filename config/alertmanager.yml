@@ -1,5 +1,5 @@
 # config/alertmanager.yml
-# Alertmanager configuration for ai-lb.
+# Alertmanager configuration for LLB.
 # Customize receivers for your notification channels.
 # Reference: docs/ds7-production-deployment-spec.md §3.4
 

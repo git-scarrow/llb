@@ -1,7 +1,7 @@
 # FOSS Inspirations & Attribution
 
 This document tracks open-source projects whose ideas, patterns, or code
-influenced ai-lb's implementation. Attribution is included inline in source
+influenced LLB's implementation. Attribution is included inline in source
 comments as well.
 
 ---

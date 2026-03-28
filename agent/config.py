@@ -33,7 +33,7 @@ def _env_bool(name: str, default: bool) -> bool:
 
 @dataclass(frozen=True)
 class WorkerConfig:
-    lb_url: str = _env_str("AI_LB_URL", "http://localhost:8000")
+    lb_url: str = _env_str("LLB_URL", os.getenv("AI_LB_URL", f"http://localhost:{os.getenv('LLB_PORT', os.getenv('AI_LB_PORT', '8002'))}"))  # COMPAT: AI_LB_* fallback remove after 2026-06-01
     model: str = _env_str("WORKER_MODEL", "auto")
     max_turns: int = _env_int("WORKER_MAX_TURNS", 5)
     timeout_secs: float = _env_float("WORKER_TIMEOUT_SECS", 60.0)

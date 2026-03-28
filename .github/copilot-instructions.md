@@ -1,8 +1,8 @@
-# Copilot Instructions for ai-lb
+# Copilot Instructions for LLB
 
 ## Project Overview
 
-**ai-lb** is a modular, containerized load balancer for self-hosted Large Language Models (LLMs). It routes OpenAI-compatible API requests (`/v1/chat/completions`, `/v1/embeddings`, `/v1/models`) across multiple backend nodes with health-aware selection, circuit breaking, retries, and Prometheus metrics.
+**LLB** (Large Language Balancer) is a modular, containerized load balancer for self-hosted Large Language Models (LLMs). It routes OpenAI-compatible API requests (`/v1/chat/completions`, `/v1/embeddings`, `/v1/models`) across multiple backend nodes with health-aware selection, circuit breaking, retries, and Prometheus metrics.
 
 ## Repository Structure
 

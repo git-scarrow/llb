@@ -3,7 +3,7 @@
 # Define the container name based on the docker-compose file
 CONTAINER="openclaw_agent_platform"
 
-echo "Testing Sidecar Connection: OpenClaw -> AI-LB"
+echo "Testing Sidecar Connection: OpenClaw -> LLB"
 
 # Ensure the stack is up
 if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
