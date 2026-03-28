@@ -11,4 +11,5 @@ __pycache__/
 .envrc
 lm-lb
 src/ai_lb.egg-info/
+proxmox_mcp.log
 2025-09-12-implement-these-changes-in-ai-lb.txt
