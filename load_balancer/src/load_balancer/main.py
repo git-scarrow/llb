@@ -3626,8 +3626,18 @@ async def responses_api(request: Request):
             # response.output_item.added
             yield f"event: response.output_item.added\ndata: {json.dumps({'type': 'response.output_item.added', 'response_id': resp_id, 'output_index': idx, 'item': item})}\n\n"
 
+            # For function_call items, emit arguments delta + done events
+            if item.get("type") == "function_call":
+                args_str = item.get("arguments", "{}")
+                if not isinstance(args_str, str):
+                    args_str = json.dumps(args_str)
+                # response.function_call_arguments.delta (single chunk with full args)
+                yield f"event: response.function_call_arguments.delta\ndata: {json.dumps({'type': 'response.function_call_arguments.delta', 'response_id': resp_id, 'item_id': item_id, 'output_index': idx, 'delta': args_str})}\n\n"
+                # response.function_call_arguments.done
+                yield f"event: response.function_call_arguments.done\ndata: {json.dumps({'type': 'response.function_call_arguments.done', 'response_id': resp_id, 'item_id': item_id, 'output_index': idx, 'arguments': args_str})}\n\n"
+
             # For text message items, emit text delta + done events
-            if item.get("type") == "message":
+            elif item.get("type") == "message":
                 for ci, part in enumerate(item.get("content", [])):
                     if part.get("type") == "output_text":
                         text = part.get("text", "")
