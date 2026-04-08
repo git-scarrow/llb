@@ -2585,8 +2585,6 @@ async def chat_completions(request: Request):
         else:
             url = f"http://{node}/v1/chat/completions"
             req_headers = headers
-            if config.OLLAMA_NUM_CTX and "options" not in req_body:
-                req_body = {**req_body, "options": {"num_ctx": config.OLLAMA_NUM_CTX}}
 
         logger.info("[req=%s] Routing request for model '%s' to %s", request_id, model_name, node)
         acquired = await _acquire_slot(node)
@@ -3060,8 +3058,6 @@ async def chat_completions(request: Request):
         else:
             url = f"http://{node}/v1/chat/completions"
             req_headers = headers
-            if config.OLLAMA_NUM_CTX and "options" not in req_body:
-                req_body = {**req_body, "options": {"num_ctx": config.OLLAMA_NUM_CTX}}
 
         logger.info("[req=%s] Routing (non-stream) request for model '%s' to %s", request_id, model_name, node)
         acquired = await _acquire_slot(node)

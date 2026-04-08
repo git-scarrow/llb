@@ -78,7 +78,6 @@ STICKY_TTL_SECS = int(os.getenv("STICKY_TTL_SECS", 600))
 
 # Model classes and fallback configuration
 LB_PREFER_SMALL = os.getenv("LM_PREFER_SMALL", "false").lower() in ("1", "true", "yes")
-OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "0")) or None  # None = don't inject
 AUTO_MIN_NODES = int(os.getenv("AUTO_MIN_NODES", 2))
 STRICT_AUTO_MODE = os.getenv("STRICT_AUTO_MODE", "false").lower() in ("1", "true", "yes")
 
