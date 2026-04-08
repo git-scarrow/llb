@@ -2432,8 +2432,20 @@ async def chat_completions(request: Request):
         prefer_intersection = request.query_params.get("require_all", "false").lower() in ("1", "true", "yes")
         resolved = None
 
+        # Tool-aware routing: requests with tools get a tool-calling specialist.
+        # Checked first — tool presence is a stronger signal than prompt complexity.
+        has_tools = bool(body.get("tools"))
+        if has_tools and config.TOOL_CALLING_MODELS:
+            for tc_model in config.TOOL_CALLING_MODELS:
+                tc_nodes = await get_eligible_nodes(tc_model, include_cloud=False)
+                if tc_nodes:
+                    resolved = tc_model
+                    logger.info("Tool-aware routing: %d tools in request -> selected '%s' (%d nodes)",
+                                len(body["tools"]), tc_model, len(tc_nodes))
+                    break
+
         # Complexity-based tier selection (RouteLLM-inspired, Apache-2.0 — lm-sys/RouteLLM)
-        if getattr(config, "COMPLEXITY_ROUTING_ENABLED", False):
+        if not resolved and getattr(config, "COMPLEXITY_ROUTING_ENABLED", False):
             messages = body.get("messages", [])
             if messages:
                 _complexity_router = ComplexityRoutingStrategy()

@@ -49,6 +49,11 @@ DEFAULT_EMBEDDINGS_MODEL = (os.getenv("DEFAULT_EMBEDDINGS_MODEL", "") or "").str
 PREFERRED_MODELS = [s.strip() for s in os.getenv("PREFERRED_MODELS", "").replace(";", ",").split(",") if s.strip()]
 AUTO_MODEL_STRATEGY = os.getenv("AUTO_MODEL_STRATEGY", "any_first")  # any_first | intersection_first
 
+# Tool-aware routing: when a request includes tools and the model is auto/default,
+# prefer these models (in order) over the general PREFERRED_MODELS list.
+# Models optimized for structured tool calling — accuracy over generation quality.
+TOOL_CALLING_MODELS = [s.strip() for s in os.getenv("TOOL_CALLING_MODELS", "qwen3.5:4b").replace(";", ",").split(",") if s.strip()]
+
 # Optional static model weights for auto selection (can be overridden via admin API)
 def _parse_weights(s: str):
     out = {}
