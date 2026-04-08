@@ -3567,16 +3567,18 @@ async def responses_api(request: Request):
     # Tool calls
     for tc in msg.get("tool_calls", []):
         fn_name = tc.get("function", {}).get("name", "")
+        fn_args = tc.get("function", {}).get("arguments", "{}")
         if not fn_name:
             logger.warning("responses_api: dropping tool call with empty function name (model=%s)",
                            raw.get("model", "?"))
             continue
+        logger.info("responses_api: tool_call name=%s args=%s", fn_name, repr(fn_args)[:200])
         output.append({
             "type": "function_call",
             "id": f"fc_{uuid.uuid4().hex[:24]}",
             "call_id": tc.get("id", f"call_{uuid.uuid4().hex[:24]}"),
             "name": fn_name,
-            "arguments": tc.get("function", {}).get("arguments", "{}"),
+            "arguments": fn_args,
         })
 
     # Text content (some models put text in "reasoning" instead of "content")
