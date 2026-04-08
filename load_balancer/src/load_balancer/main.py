@@ -3564,18 +3564,56 @@ async def responses_api(request: Request):
 
     usage = cc.get("usage", {})
 
-    return JSONResponse(content={
-        "id": f"resp_{uuid.uuid4().hex[:24]}",
+    resp_id = f"resp_{uuid.uuid4().hex[:24]}"
+    created_at = cc.get("created", int(time.time()))
+    model_name_out = cc.get("model", raw.get("model", "unknown"))
+    usage_out = {
+        "input_tokens": usage.get("prompt_tokens", 0),
+        "output_tokens": usage.get("completion_tokens", 0),
+        "total_tokens": usage.get("total_tokens", 0),
+    }
+
+    response_obj = {
+        "id": resp_id,
         "object": "response",
-        "created_at": cc.get("created", int(time.time())),
-        "model": cc.get("model", raw.get("model", "unknown")),
+        "created_at": created_at,
+        "model": model_name_out,
         "output": output,
-        "usage": {
-            "input_tokens": usage.get("prompt_tokens", 0),
-            "output_tokens": usage.get("completion_tokens", 0),
-            "total_tokens": usage.get("total_tokens", 0),
-        },
-    })
+        "usage": usage_out,
+    }
+
+    # --- Non-streaming: return JSON as before ---
+    if not raw.get("stream"):
+        return JSONResponse(content=response_obj)
+
+    # --- Streaming: emit Responses API SSE events ---
+    async def responses_sse_stream():
+        # response.created
+        yield f"event: response.created\ndata: {json.dumps(response_obj)}\n\n"
+
+        for idx, item in enumerate(output):
+            item_id = item.get("id", f"item_{uuid.uuid4().hex[:16]}")
+
+            # response.output_item.added
+            yield f"event: response.output_item.added\ndata: {json.dumps({'type': 'response.output_item.added', 'response_id': resp_id, 'output_index': idx, 'item': item})}\n\n"
+
+            # For text message items, emit text delta + done events
+            if item.get("type") == "message":
+                for ci, part in enumerate(item.get("content", [])):
+                    if part.get("type") == "output_text":
+                        text = part.get("text", "")
+                        # response.output_text.delta (single chunk with full text)
+                        yield f"event: response.output_text.delta\ndata: {json.dumps({'type': 'response.output_text.delta', 'response_id': resp_id, 'item_id': item_id, 'output_index': idx, 'content_index': ci, 'delta': text})}\n\n"
+                        # response.output_text.done
+                        yield f"event: response.output_text.done\ndata: {json.dumps({'type': 'response.output_text.done', 'response_id': resp_id, 'item_id': item_id, 'output_index': idx, 'content_index': ci, 'text': text})}\n\n"
+
+            # response.output_item.done
+            yield f"event: response.output_item.done\ndata: {json.dumps({'type': 'response.output_item.done', 'response_id': resp_id, 'output_index': idx, 'item': item})}\n\n"
+
+        # response.completed
+        yield f"event: response.completed\ndata: {json.dumps(response_obj)}\n\n"
+
+    return StreamingResponse(responses_sse_stream(), media_type="text/event-stream")
 
 @app.api_route("/v1/embeddings", methods=["POST"])
 async def embeddings(request: Request):
