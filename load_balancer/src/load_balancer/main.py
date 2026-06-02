@@ -89,11 +89,12 @@ async def _scan_loop():
             for addr in list(_healthy):
                 if addr not in new_state:
                     logger.info("Node down: %s", addr)
-            _healthy.clear()
+            _healthy.clear()  # atomic enough for CPython's GIL; asyncio never preempts between these two lines
             _healthy.update(new_state)
             await asyncio.sleep(SCAN_INTERVAL)
     finally:
-        await _scan_client.aclose()
+        if _scan_client:
+            await _scan_client.aclose()
 
 
 @asynccontextmanager
