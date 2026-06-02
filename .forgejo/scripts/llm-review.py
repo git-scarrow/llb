@@ -5,8 +5,6 @@ import json
 import os
 import subprocess
 import sys
-import urllib.request
-import urllib.error
 
 LLM_HOST = os.environ.get("LLM_HOST", "http://aws-ec2:8002")
 LLM_MODEL = os.environ.get("LLM_MODEL", "gemma4:26b")
@@ -44,20 +42,16 @@ MAX_DIFF_BYTES = 12_000
 
 
 def call_llm(prompt: str, host: str) -> str:
-    payload = json.dumps({
+    import httpx
+    payload = {
         "model": LLM_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "stream": False,
         "temperature": 0.2,
-    }).encode()
-    req = urllib.request.Request(
-        f"{host}/v1/chat/completions",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        return json.loads(resp.read())["choices"][0]["message"]["content"].strip()
+    }
+    resp = httpx.post(f"{host}/v1/chat/completions", json=payload, timeout=120, follow_redirects=True)
+    resp.raise_for_status()
+    return resp.json()["choices"][0]["message"]["content"].strip()
 
 
 def review_file(filename: str, diff: str) -> str:
@@ -99,21 +93,19 @@ def post_comment(body: str):
         print("--- Review output ---")
         print(body)
         return
-    payload = json.dumps({"body": body}).encode()
+    import httpx
     url = f"https://codeberg.org/api/v1/repos/{REPO}/issues/{PR_NUMBER}/comments"
-    req = urllib.request.Request(
-        url, data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"token {CODEBERG_TOKEN}",
-        },
-        method="POST",
-    )
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            print(f"Posted review comment (HTTP {resp.status})")
-    except urllib.error.HTTPError as e:
-        print(f"Failed to post comment: {e.code} {e.read().decode()}", file=sys.stderr)
+        resp = httpx.post(
+            url,
+            json={"body": body},
+            headers={"Authorization": f"token {CODEBERG_TOKEN}"},
+            timeout=15,
+            follow_redirects=True,
+        )
+        print(f"Posted review comment (HTTP {resp.status_code})")
+    except httpx.HTTPStatusError as e:
+        print(f"Failed to post comment: {e.response.status_code} {e.response.text}", file=sys.stderr)
 
 
 def main():
