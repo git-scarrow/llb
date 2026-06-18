@@ -80,6 +80,7 @@ class PlanResult:
     task_results: Dict[str, BackendResult] = field(default_factory=dict)
     final_response: Optional[BackendResult] = None
     error: Optional[str] = None
+    phase_timings: Dict[str, float] = field(default_factory=dict)  # decompose_ms/dispatch_ms/assemble_ms
 
 
 # ---------------------------------------------------------------------------
@@ -664,7 +665,9 @@ class ExecutionEngine:
 
         Inspiration: Perplexity Computer (2026-02-27), Swarms (Apache-2.0 kyegomez/swarms)
         """
-        deadline = asyncio.get_event_loop().time() + overall_timeout
+        _loop = asyncio.get_event_loop()
+        _t0 = _loop.time()
+        deadline = _t0 + overall_timeout
 
         # --- Step 1: Decompose ---
         system_prompt = _PLANNER_SYSTEM_PROMPT.format(max_tasks=max_subtasks)
@@ -713,6 +716,7 @@ class ExecutionEngine:
             for i, t in enumerate(raw_tasks)
         ]
         logger.info("PLAN: decomposed into %d subtasks for goal: %.80s", len(tasks), goal)
+        _t_decompose = _loop.time()
 
         # --- Step 2: Dispatch (topological batch execution) ---
         task_map = {t.id: t for t in tasks}
@@ -744,6 +748,7 @@ class ExecutionEngine:
                 task_results[task.id] = result
                 completed.add(task.id)
             remaining_tasks = [t for t in remaining_tasks if t.id not in completed]
+        _t_dispatch = _loop.time()
 
         # --- Step 3: Assemble ---
         results_text = "\n\n".join(
@@ -770,6 +775,11 @@ class ExecutionEngine:
             tasks=tasks,
             task_results=task_results,
             final_response=final,
+            phase_timings={
+                "decompose_ms": round((_t_decompose - _t0) * 1000, 1),
+                "dispatch_ms": round((_t_dispatch - _t_decompose) * 1000, 1),
+                "assemble_ms": round((_loop.time() - _t_dispatch) * 1000, 1),
+            },
         )
 
     async def execute_consensus(

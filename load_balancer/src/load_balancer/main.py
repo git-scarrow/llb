@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 from fastapi import FastAPI, Request, Response, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
+from starlette.background import BackgroundTask
 import uuid
 import asyncio
 from contextlib import asynccontextmanager
@@ -1637,6 +1638,205 @@ async def _record_multi_exec_metrics(mode: str, backends_attempted: int, backend
         pass
 
 
+# ===========================================================================
+# PLAN observability + governance
+# Every llb-plan response is classified into exactly ONE terminal state:
+#   planned_success | planned_partial | degraded_fallback | planner_unavailable
+#   | timeout | admission_rejected | internal_error
+# All metric labels are drawn from FIXED enumerations (result_state, phase,
+# backend_id, timeout_type, failure_reason) -- never request text / model output /
+# raw exception strings / arbitrary URLs.
+# ===========================================================================
+PLAN_STATE_SUCCESS = "planned_success"
+PLAN_STATE_PARTIAL = "planned_partial"
+PLAN_STATE_DEGRADED = "degraded_fallback"
+PLAN_STATE_PLANNER_UNAVAILABLE = "planner_unavailable"
+PLAN_STATE_TIMEOUT = "timeout"
+PLAN_STATE_ADMISSION_REJECTED = "admission_rejected"
+PLAN_STATE_INTERNAL_ERROR = "internal_error"
+_PLAN_RESULT_STATES = (
+    PLAN_STATE_SUCCESS, PLAN_STATE_PARTIAL, PLAN_STATE_DEGRADED,
+    PLAN_STATE_PLANNER_UNAVAILABLE, PLAN_STATE_TIMEOUT,
+    PLAN_STATE_ADMISSION_REJECTED, PLAN_STATE_INTERNAL_ERROR,
+)
+_PLAN_FAILURE_REASONS = (
+    "none", "decompose_timeout", "assembly_timeout", "overall_timeout",
+    "planner_unreachable", "planner_bad_json", "planner_no_tasks",
+    "subtasks_incomplete", "assembly_failed", "admission_rejected", "internal",
+)
+_PLAN_TIMEOUT_TYPES = ("none", "decompose", "assembly", "overall")
+_PLAN_PHASES = ("decompose", "dispatch", "assemble")
+
+
+def _plan_classify(plan_result) -> Dict[str, Any]:
+    """Map a PlanResult to a bounded terminal state for the success/failure paths
+    (admission_rejected / internal_error from unexpected exceptions are set by the
+    caller). Returns result_state, http_status, degraded, failure_reason, timeout_type."""
+    tasks = plan_result.tasks or []
+    requested = len(tasks)
+    completed = sum(1 for r in (plan_result.task_results or {}).values() if r.success)
+    final = plan_result.final_response
+    low = (plan_result.error or "").lower()
+
+    if not (final and final.success):
+        if "timed out during decomposition" in low:
+            return {"result_state": PLAN_STATE_TIMEOUT, "http_status": 504, "degraded": False,
+                    "failure_reason": "decompose_timeout", "timeout_type": "decompose"}
+        if "assembler timed out" in low:
+            return {"result_state": PLAN_STATE_TIMEOUT, "http_status": 504, "degraded": False,
+                    "failure_reason": "assembly_timeout", "timeout_type": "assembly"}
+        if "timed out" in low or "timeout" in low:
+            return {"result_state": PLAN_STATE_TIMEOUT, "http_status": 504, "degraded": False,
+                    "failure_reason": "overall_timeout", "timeout_type": "overall"}
+        if "invalid json" in low:
+            return {"result_state": PLAN_STATE_PLANNER_UNAVAILABLE, "http_status": 424, "degraded": False,
+                    "failure_reason": "planner_bad_json", "timeout_type": "none"}
+        if "no tasks" in low:
+            return {"result_state": PLAN_STATE_PLANNER_UNAVAILABLE, "http_status": 424, "degraded": False,
+                    "failure_reason": "planner_no_tasks", "timeout_type": "none"}
+        if "planner failed" in low or "empty response" in low or not final:
+            return {"result_state": PLAN_STATE_PLANNER_UNAVAILABLE, "http_status": 424, "degraded": False,
+                    "failure_reason": "planner_unreachable", "timeout_type": "none"}
+        return {"result_state": PLAN_STATE_INTERNAL_ERROR, "http_status": 500, "degraded": False,
+                "failure_reason": "assembly_failed", "timeout_type": "none"}
+
+    if requested > 0 and completed < requested:
+        return {"result_state": PLAN_STATE_PARTIAL, "http_status": 200, "degraded": False,
+                "failure_reason": "subtasks_incomplete", "timeout_type": "none"}
+    return {"result_state": PLAN_STATE_SUCCESS, "http_status": 200, "degraded": False,
+            "failure_reason": "none", "timeout_type": "none"}
+
+
+async def _acquire_plan_slot() -> bool:
+    """Admission control: cap concurrent PLANs (protects ALL paths, incl. direct
+    non-litellm callers). Fail-open on a redis error (availability > strict cap)."""
+    try:
+        max_plans = int(getattr(config, "MAX_CONCURRENT_PLANS", 1) or 0)
+    except Exception:
+        max_plans = 1
+    if max_plans <= 0:
+        return True  # cap disabled
+    try:
+        n = await redis_client.incrby("lb:plan:inflight", 1)
+        await redis_client.expire("lb:plan:inflight", 1800)  # self-heal a leaked counter
+        if int(n) > max_plans:
+            await redis_client.incrby("lb:plan:inflight", -1)
+            return False
+        return True
+    except Exception:
+        return True
+
+
+async def _release_plan_slot():
+    try:
+        n = await redis_client.incrby("lb:plan:inflight", -1)
+        if int(n) < 0:
+            await redis_client.set("lb:plan:inflight", 0)
+    except Exception:
+        pass
+
+
+async def _record_plan_metrics(result_state: str, failure_reason: str, timeout_type: str,
+                               backend_id: str, requested: int, completed: int,
+                               total_ms: float, phase_timings: Optional[Dict] = None):
+    """Bounded-label PLAN metrics (see header). Safe to call on every terminal state."""
+    try:
+        rs = result_state if result_state in _PLAN_RESULT_STATES else PLAN_STATE_INTERNAL_ERROR
+        fr = failure_reason if failure_reason in _PLAN_FAILURE_REASONS else "internal"
+        tt = timeout_type if timeout_type in _PLAN_TIMEOUT_TYPES else "none"
+        bid = backend_id if backend_id else "none"
+        await redis_client.incrby("lb:plan:requests_total", 1)
+        await redis_client.incrby(f"lb:plan:requests_total:state:{rs}", 1)
+        await redis_client.sadd("lb:plan:result_states", rs)
+        if rs in (PLAN_STATE_SUCCESS, PLAN_STATE_PARTIAL):
+            await redis_client.incrby("lb:plan:success_total", 1)
+        if rs == PLAN_STATE_DEGRADED:
+            await redis_client.incrby("lb:plan:degraded_total", 1)
+        if rs == PLAN_STATE_ADMISSION_REJECTED:
+            await redis_client.incrby("lb:plan:admission_rejected_total", 1)
+        if fr != "none":
+            await redis_client.incrby(f"lb:plan:failures_total:reason:{fr}", 1)
+            await redis_client.sadd("lb:plan:failure_reasons", fr)
+        if tt != "none":
+            await redis_client.incrby(f"lb:plan:timeouts_total:type:{tt}", 1)
+            await redis_client.sadd("lb:plan:timeout_types", tt)
+        await redis_client.incrby("lb:plan:subtasks_requested_total", int(requested))
+        await redis_client.incrby("lb:plan:subtasks_completed_total", int(completed))
+        await redis_client.incrby(f"lb:plan:duration_ms_sum:state:{rs}", int(max(0.0, total_ms)))
+        await redis_client.incrby(f"lb:plan:duration_ms_count:state:{rs}", 1)
+        await redis_client.sadd("lb:plan:backends", bid)
+        await redis_client.incrby(f"lb:plan:requests_total:backend:{bid}", 1)
+        for phase, ms in (phase_timings or {}).items():
+            ph = str(phase).replace("_ms", "")
+            if ph in _PLAN_PHASES:
+                await redis_client.incrby(f"lb:plan:phase_ms_sum:phase:{ph}", int(max(0.0, ms)))
+                await redis_client.incrby(f"lb:plan:phase_ms_count:phase:{ph}", 1)
+                await redis_client.sadd("lb:plan:phases", ph)
+    except Exception:
+        pass
+
+
+def _build_plan_metadata(classification: Dict, plan_result, planner_backend: str,
+                         total_ms: float) -> Dict[str, Any]:
+    """Machine-readable metadata attached to EVERY llb-plan response (body + headers)."""
+    requested = completed = 0
+    phase_timings: Dict[str, Any] = {}
+    if plan_result is not None:
+        tasks = plan_result.tasks or []
+        requested = len(tasks)
+        completed = sum(1 for r in (plan_result.task_results or {}).values() if r.success)
+        phase_timings = getattr(plan_result, "phase_timings", {}) or {}
+    return {
+        "mode": "plan",
+        "result_state": classification["result_state"],
+        "degraded": bool(classification["degraded"]),
+        "failure_reason": classification["failure_reason"],
+        "timeout_type": classification.get("timeout_type", "none"),
+        "planner_backend": planner_backend or "",
+        "subtasks_requested": requested,
+        "subtasks_completed": completed,
+        "elapsed_ms": round(total_ms, 1),
+        "phase_timings_ms": phase_timings,
+    }
+
+
+def _plan_headers(meta: Dict) -> Dict[str, str]:
+    """Mirror the key metadata into response headers (survives litellm better than body)."""
+    return {
+        "x-execution-mode": "plan",
+        "x-plan-result-state": str(meta.get("result_state", "")),
+        "x-plan-degraded": "true" if meta.get("degraded") else "false",
+        "x-plan-failure-reason": str(meta.get("failure_reason", "none")),
+        "x-plan-timeout-type": str(meta.get("timeout_type", "none")),
+        "x-plan-planner": str(meta.get("planner_backend", "")),
+        "x-plan-subtasks-requested": str(meta.get("subtasks_requested", 0)),
+        "x-plan-subtasks-completed": str(meta.get("subtasks_completed", 0)),
+        "x-plan-elapsed-ms": str(meta.get("elapsed_ms", 0)),
+    }
+
+
+async def _plan_degraded_single_shot(messages: list, request_id: str) -> Optional[Dict]:
+    """Opt-in degraded fallback: loopback the original prompt through the LB's normal
+    'auto' path so the caller still gets an answer when planning cannot run. Returns the
+    chat.completion dict or None. No X-Execution-Mode header -> no PLAN recursion."""
+    try:
+        port = int(getattr(config, "LLB_PORT", 8000) or 8000)
+    except Exception:
+        port = 8000
+    payload = {"model": "auto", "messages": messages, "stream": False}
+    try:
+        resp = await http_client.post(
+            f"http://127.0.0.1:{port}/v1/chat/completions",
+            json=payload,
+            headers={"x-request-id": f"{request_id}-degraded"},
+        )
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception:
+        pass
+    return None
+
+
 async def _record_consensus_metrics(
     model_name: str,
     consensus: ConsensusResult,
@@ -1823,7 +2023,9 @@ async def _handle_multi_backend_execution(
     else:
         backends = await _select_backends_for_execution(exec_config, model_name, all_eligible)
 
-    if not backends:
+    if not backends and exec_config.mode != ExecutionMode.PLAN:
+        # PLAN routes via PLANNER_BACKEND (not the eligible pool), so let it reach its
+        # branch even with no eligible nodes -> it classifies planner-unreachable cleanly.
         raise HTTPException(status_code=404, detail="No eligible backends for multi-exec")
 
     # Build mapping of backend -> actual model name to use
@@ -1907,6 +2109,12 @@ async def _handle_multi_backend_execution(
     elif exec_config.mode == ExecutionMode.PLAN:
         # Perplexity Computer-style multi-step task decomposition + specialization
         planner_node = _resolve_planner_backend(oracle_backend)
+        # Optional ops/test affordance: force a specific planner backend host:port. Lets
+        # operators target a planner and lets tests exercise planner_unavailable safely
+        # (e.g. point at a dead host) without disturbing the live PLANNER_BACKEND.
+        _planner_override = (request.headers.get("x-plan-planner-override") or "").strip()
+        if _planner_override:
+            planner_node = _planner_override
         if not planner_node:
             # Fall back to first eligible node when no explicit planner is configured
             if all_eligible:
@@ -1924,6 +2132,23 @@ async def _handle_multi_backend_execution(
             key = node.replace("cloud:", "") if node.startswith("cloud:") else node
             for cap in caps_map.get(key, []):
                 capability_nodes.setdefault(cap, []).append(node)
+
+        # Admission control: cap concurrent PLANs (protects ALL plan paths -- SSE and
+        # non-SSE, incl. direct non-litellm callers -- from dogpiling the single 32B
+        # planner node). Released by each path (non-SSE finally / SSE BackgroundTask).
+        if not await _acquire_plan_slot():
+            _ms = (time.monotonic() - start_time) * 1000.0
+            _cls = {"result_state": PLAN_STATE_ADMISSION_REJECTED, "http_status": 429,
+                    "degraded": False, "failure_reason": "admission_rejected", "timeout_type": "none"}
+            await _record_plan_metrics(PLAN_STATE_ADMISSION_REJECTED, "admission_rejected", "none",
+                                       planner_node, 0, 0, _ms, {})
+            _meta = _build_plan_metadata(_cls, None, planner_node, _ms)
+            raise HTTPException(status_code=429,
+                                detail={"error": "plan_admission_rejected", "llb_plan": _meta},
+                                headers={**_plan_headers(_meta),
+                                         "Retry-After": str(getattr(config, "RETRY_AFTER_SECS", 5)),
+                                         "x-request-id": request_id})
+        allow_fallback = (request.headers.get("x-plan-allow-fallback", "") or "").strip().lower() in ("1", "true", "yes")
 
         # SSE streaming path: Accept: text/event-stream → execute_plan_stream
         accept_header = request.headers.get("accept", "")
@@ -1972,50 +2197,99 @@ async def _handle_multi_backend_execution(
                     "x-request-id": request_id,
                     "x-execution-mode": "plan",
                 },
+                background=BackgroundTask(_release_plan_slot),  # release admission slot when stream ends
             )
 
-        # Non-streaming path (existing)
+        # Non-streaming path. The LB owns ALL plan terminal states + machine-readable
+        # metadata, so a caller can ALWAYS tell whether real planning occurred. Default
+        # policy: planning-can't-run -> non-success state (never a silent plain answer);
+        # a plain answer is returned ONLY on explicit opt-in (X-Plan-Allow-Fallback) and
+        # is marked degraded=true.
+        try:
+            async def call_backend_for_plan(backend_node: str, plan_messages: List[Dict]) -> BackendResult:
+                plan_body = dict(body)
+                plan_body["messages"] = plan_messages
+                plan_body.pop("stream", None)  # planner calls are non-streaming
+                return await _make_backend_request(
+                    backend_node, plan_body, headers, model_name, request_id, start_time,
+                )
 
-        # call_backend: make an HTTP call to a specific backend with specific messages
-        async def call_backend_for_plan(backend_node: str, plan_messages: List[Dict]) -> BackendResult:
-            plan_body = dict(body)
-            plan_body["messages"] = plan_messages
-            plan_body.pop("stream", None)  # planner calls are non-streaming
-            return await _make_backend_request(
-                backend_node, plan_body, headers, model_name, request_id, start_time,
-            )
+            plan_result = None
+            try:
+                plan_result = await engine.execute_plan(
+                    messages=body.get("messages", []),
+                    call_backend=call_backend_for_plan,
+                    planner_backend=planner_node,
+                    capability_nodes=capability_nodes,
+                    default_nodes=all_eligible,
+                    max_subtasks=int(getattr(config, "PLAN_MAX_SUBTASKS", 5)),
+                    subtask_timeout=float(getattr(config, "PLAN_SUBTASK_TIMEOUT_SECS", 30.0)),
+                    overall_timeout=exec_config.timeout_secs,
+                )
+                classification = _plan_classify(plan_result)
+            except Exception:
+                logger.exception("PLAN: unexpected error during execution")
+                classification = {"result_state": PLAN_STATE_INTERNAL_ERROR, "http_status": 500,
+                                  "degraded": False, "failure_reason": "internal", "timeout_type": "none"}
 
-        plan_result = await engine.execute_plan(
-            messages=body.get("messages", []),
-            call_backend=call_backend_for_plan,
-            planner_backend=planner_node,
-            capability_nodes=capability_nodes,
-            default_nodes=all_eligible,
-            max_subtasks=int(getattr(config, "PLAN_MAX_SUBTASKS", 5)),
-            subtask_timeout=float(getattr(config, "PLAN_SUBTASK_TIMEOUT_SECS", 30.0)),
-            overall_timeout=exec_config.timeout_secs,
-        )
-        await _record_multi_exec_metrics("plan", len(plan_result.task_results), 1 if plan_result.final_response and plan_result.final_response.success else 0)
+            total_ms = (time.monotonic() - start_time) * 1000.0
+            requested = len(plan_result.tasks) if plan_result else 0
+            completed = sum(1 for r in (plan_result.task_results or {}).values() if r.success) if plan_result else 0
+            phase_timings = getattr(plan_result, "phase_timings", {}) if plan_result else {}
+            result_state = classification["result_state"]
+            await _record_multi_exec_metrics(
+                "plan", len(plan_result.task_results) if plan_result else 0,
+                1 if (plan_result and plan_result.final_response and plan_result.final_response.success) else 0)
 
-        if plan_result.error and not plan_result.final_response:
-            raise HTTPException(status_code=502, detail=f"PLAN execution failed: {plan_result.error}")
-
-        # Use final assembled response as the output — format as OpenAI chat.completion
-        final = plan_result.final_response
-        if final and final.success:
-            resp_body = plan_result_to_openai_response(plan_result)
-        else:
-            resp_body = {
-                "error": plan_result.error or "Plan assembly failed",
-                "goal": plan_result.goal,
-                "tasks_completed": len([r for r in plan_result.task_results.values() if r.success]),
-            }
-        out = JSONResponse(content=resp_body)
-        # Expose plan metadata in response headers
-        out.headers["x-plan-goal"] = (plan_result.goal or "")[:200]
-        out.headers["x-plan-tasks"] = str(len(plan_result.tasks))
-        out.headers["x-plan-planner"] = planner_node
-        backends = list(plan_result.task_results.keys())  # reuse for common header below
+            if result_state in (PLAN_STATE_SUCCESS, PLAN_STATE_PARTIAL):
+                # Real planning occurred -> 200 with the assembled answer + metadata.
+                await _record_plan_metrics(result_state, classification["failure_reason"],
+                                           classification["timeout_type"], planner_node,
+                                           requested, completed, total_ms, phase_timings)
+                meta = _build_plan_metadata(classification, plan_result, planner_node, total_ms)
+                resp_body = plan_result_to_openai_response(plan_result)
+                resp_body["llb_plan"] = meta
+                out = JSONResponse(content=resp_body)
+                for _hk, _hv in _plan_headers(meta).items():
+                    out.headers[_hk] = _hv
+                out.headers["x-plan-goal"] = (plan_result.goal or "")[:200]
+                backends = list(plan_result.task_results.keys())
+            elif allow_fallback:
+                # Explicit opt-in -> plain answer via loopback 'auto', marked degraded.
+                degraded = await _plan_degraded_single_shot(body.get("messages", []), request_id)
+                if isinstance(degraded, dict):
+                    dcls = {"result_state": PLAN_STATE_DEGRADED, "http_status": 200, "degraded": True,
+                            "failure_reason": classification["failure_reason"],
+                            "timeout_type": classification["timeout_type"]}
+                    await _record_plan_metrics(PLAN_STATE_DEGRADED, dcls["failure_reason"],
+                                               dcls["timeout_type"], planner_node,
+                                               requested, completed, total_ms, phase_timings)
+                    meta = _build_plan_metadata(dcls, plan_result, planner_node, total_ms)
+                    degraded["llb_plan"] = meta
+                    out = JSONResponse(content=degraded)
+                    for _hk, _hv in _plan_headers(meta).items():
+                        out.headers[_hk] = _hv
+                    backends = []
+                else:
+                    # Even the degraded fallback failed -> surface the original non-success state.
+                    await _record_plan_metrics(result_state, classification["failure_reason"],
+                                               classification["timeout_type"], planner_node,
+                                               requested, completed, total_ms, phase_timings)
+                    meta = _build_plan_metadata(classification, plan_result, planner_node, total_ms)
+                    raise HTTPException(status_code=classification["http_status"],
+                                        detail={"error": "plan_failed", "llb_plan": meta},
+                                        headers={**_plan_headers(meta), "x-request-id": request_id})
+            else:
+                # Default: NO silent fallback. Surface the non-success plan state + reason.
+                await _record_plan_metrics(result_state, classification["failure_reason"],
+                                           classification["timeout_type"], planner_node,
+                                           requested, completed, total_ms, phase_timings)
+                meta = _build_plan_metadata(classification, plan_result, planner_node, total_ms)
+                raise HTTPException(status_code=classification["http_status"],
+                                    detail={"error": "plan_failed", "llb_plan": meta},
+                                    headers={**_plan_headers(meta), "x-request-id": request_id})
+        finally:
+            await _release_plan_slot()
 
     elif exec_config.mode == ExecutionMode.CONSENSUS:
         # Execute consensus with oracle and local/cloud tracking
@@ -4223,6 +4497,76 @@ async def metrics():
             val = await redis_client.get(f"lb:consensus_comparison:{model}:{comp_type}")
             if val:
                 lines.append(f'{P}consensus_comparison_type{{model="{model}",type="{comp_type}"}} {int(val)}')
+
+    # --- PLAN observability + governance metrics (labels: result_state, phase,
+    #     backend_id, timeout_type, failure_reason -- all bounded enumerations) ---
+    plan_total = await redis_client.get("lb:plan:requests_total")
+    lines.append(f"# HELP {P}plan_requests_total Total llb-plan requests, by terminal result_state")
+    lines.append(f"# TYPE {P}plan_requests_total counter")
+    lines.append(f"{P}plan_requests_total {int(plan_total) if plan_total else 0}")
+    plan_states = sorted(await redis_client.smembers("lb:plan:result_states"))
+    for st in plan_states:
+        v = await redis_client.get(f"lb:plan:requests_total:state:{st}")
+        if v:
+            lines.append(f'{P}plan_requests_total{{result_state="{st}"}} {int(v)}')
+
+    for name, key in (("plan_success_total", "lb:plan:success_total"),
+                      ("plan_degraded_total", "lb:plan:degraded_total"),
+                      ("plan_admission_rejected_total", "lb:plan:admission_rejected_total"),
+                      ("plan_subtasks_requested_total", "lb:plan:subtasks_requested_total"),
+                      ("plan_subtasks_completed_total", "lb:plan:subtasks_completed_total")):
+        v = await redis_client.get(key)
+        lines.append(f"# TYPE {P}{name} counter")
+        lines.append(f"{P}{name} {int(v) if v else 0}")
+
+    lines.append(f"# HELP {P}plan_failures_total llb-plan failures by bounded reason code")
+    lines.append(f"# TYPE {P}plan_failures_total counter")
+    for fr in sorted(await redis_client.smembers("lb:plan:failure_reasons")):
+        v = await redis_client.get(f"lb:plan:failures_total:reason:{fr}")
+        if v:
+            lines.append(f'{P}plan_failures_total{{failure_reason="{fr}"}} {int(v)}')
+
+    lines.append(f"# HELP {P}plan_timeouts_total llb-plan timeouts by bounded timeout_type")
+    lines.append(f"# TYPE {P}plan_timeouts_total counter")
+    for tt in sorted(await redis_client.smembers("lb:plan:timeout_types")):
+        v = await redis_client.get(f"lb:plan:timeouts_total:type:{tt}")
+        if v:
+            lines.append(f'{P}plan_timeouts_total{{timeout_type="{tt}"}} {int(v)}')
+
+    lines.append(f"# HELP {P}plan_duration_ms_sum llb-plan total wall-clock ms by result_state")
+    lines.append(f"# TYPE {P}plan_duration_ms_sum counter")
+    for st in plan_states:
+        s = await redis_client.get(f"lb:plan:duration_ms_sum:state:{st}")
+        c = await redis_client.get(f"lb:plan:duration_ms_count:state:{st}")
+        if s:
+            lines.append(f'{P}plan_duration_ms_sum{{result_state="{st}"}} {int(s)}')
+        if c:
+            lines.append(f'{P}plan_duration_ms_count{{result_state="{st}"}} {int(c)}')
+
+    lines.append(f"# HELP {P}plan_phase_ms_sum llb-plan total per-phase ms by phase")
+    lines.append(f"# TYPE {P}plan_phase_ms_sum counter")
+    for ph in sorted(await redis_client.smembers("lb:plan:phases")):
+        s = await redis_client.get(f"lb:plan:phase_ms_sum:phase:{ph}")
+        c = await redis_client.get(f"lb:plan:phase_ms_count:phase:{ph}")
+        if s:
+            lines.append(f'{P}plan_phase_ms_sum{{phase="{ph}"}} {int(s)}')
+        if c:
+            lines.append(f'{P}plan_phase_ms_count{{phase="{ph}"}} {int(c)}')
+
+    lines.append(f"# HELP {P}plan_requests_by_backend_total llb-plan requests by planner backend_id")
+    lines.append(f"# TYPE {P}plan_requests_by_backend_total counter")
+    for bid in sorted(await redis_client.smembers("lb:plan:backends")):
+        v = await redis_client.get(f"lb:plan:requests_total:backend:{bid}")
+        if v:
+            lines.append(f'{P}plan_requests_by_backend_total{{backend_id="{bid}"}} {int(v)}')
+
+    plan_inflight = await redis_client.get("lb:plan:inflight")
+    lines.append(f"# HELP {P}plan_inflight Current in-flight llb-plan executions (admission gauge)")
+    lines.append(f"# TYPE {P}plan_inflight gauge")
+    lines.append(f"{P}plan_inflight {int(plan_inflight) if plan_inflight else 0}")
+    lines.append(f"# HELP {P}plan_max_concurrent Configured max concurrent llb-plan executions")
+    lines.append(f"# TYPE {P}plan_max_concurrent gauge")
+    lines.append(f"{P}plan_max_concurrent {int(getattr(config, 'MAX_CONCURRENT_PLANS', 1))}")
 
     content = "\n".join(lines) + "\n"
     return Response(content=content, media_type="text/plain; version=0.0.4; charset=utf-8")

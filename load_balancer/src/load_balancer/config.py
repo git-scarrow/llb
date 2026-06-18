@@ -389,6 +389,10 @@ BACKEND_CAPABILITIES: dict = _parse_backend_capabilities(os.getenv("BACKEND_CAPA
 PLANNER_BACKEND: str = os.getenv("PLANNER_BACKEND", "")
 PLAN_MAX_SUBTASKS: int = int(os.getenv("PLAN_MAX_SUBTASKS", "5"))
 PLAN_SUBTASK_TIMEOUT_SECS: float = float(os.getenv("PLAN_SUBTASK_TIMEOUT_SECS", "90.0"))
+# Admission control: max concurrent PLAN executions (protects the single-32B planner
+# node from dogpiling). <=0 disables the cap. Enforced in the LB plan orchestration
+# layer so it protects ALL paths, including direct (non-litellm) callers.
+MAX_CONCURRENT_PLANS: int = int(os.getenv("MAX_CONCURRENT_PLANS", "1"))
 
 # ---------------------------------------------------------------------------
 # Complexity-based routing (inspired by RouteLLM, Apache-2.0 — lm-sys/RouteLLM)
