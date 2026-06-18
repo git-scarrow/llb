@@ -1676,7 +1676,10 @@ def _plan_classify(plan_result) -> Dict[str, Any]:
     requested = len(tasks)
     completed = sum(1 for r in (plan_result.task_results or {}).values() if r.success)
     final = plan_result.final_response
-    low = (plan_result.error or "").lower()
+    # The failure reason may live on plan_result.error (decompose/early failures) OR on
+    # final.error (e.g. assembler timed out, which doesn't set plan_result.error).
+    _ferr = (getattr(final, "error", None) if final else None) or ""
+    low = (plan_result.error or _ferr or "").lower()
 
     if not (final and final.success):
         if "timed out during decomposition" in low:
@@ -1813,6 +1816,20 @@ def _plan_headers(meta: Dict) -> Dict[str, str]:
         "x-plan-subtasks-completed": str(meta.get("subtasks_completed", 0)),
         "x-plan-elapsed-ms": str(meta.get("elapsed_ms", 0)),
     }
+
+
+def _plan_error_response(status_code: int, error_code: str, meta: Dict, request_id: str,
+                         extra_headers: Optional[Dict] = None) -> JSONResponse:
+    """Clean machine-readable non-success plan response. Uses JSONResponse (NOT
+    HTTPException) so the structured llb_plan stays proper JSON in the body on EVERY
+    response -- the global exception handler str()-ifies HTTPException details."""
+    resp = JSONResponse(status_code=status_code, content={"error": error_code, "llb_plan": meta})
+    hdrs = {**_plan_headers(meta), "x-request-id": request_id}
+    if extra_headers:
+        hdrs.update(extra_headers)
+    for k, v in hdrs.items():
+        resp.headers[k] = v
+    return resp
 
 
 async def _plan_degraded_single_shot(messages: list, request_id: str) -> Optional[Dict]:
@@ -2143,11 +2160,8 @@ async def _handle_multi_backend_execution(
             await _record_plan_metrics(PLAN_STATE_ADMISSION_REJECTED, "admission_rejected", "none",
                                        planner_node, 0, 0, _ms, {})
             _meta = _build_plan_metadata(_cls, None, planner_node, _ms)
-            raise HTTPException(status_code=429,
-                                detail={"error": "plan_admission_rejected", "llb_plan": _meta},
-                                headers={**_plan_headers(_meta),
-                                         "Retry-After": str(getattr(config, "RETRY_AFTER_SECS", 5)),
-                                         "x-request-id": request_id})
+            return _plan_error_response(429, "plan_admission_rejected", _meta, request_id,
+                                        {"Retry-After": str(getattr(config, "RETRY_AFTER_SECS", 5))})
         allow_fallback = (request.headers.get("x-plan-allow-fallback", "") or "").strip().lower() in ("1", "true", "yes")
 
         # SSE streaming path: Accept: text/event-stream → execute_plan_stream
@@ -2276,18 +2290,14 @@ async def _handle_multi_backend_execution(
                                                classification["timeout_type"], planner_node,
                                                requested, completed, total_ms, phase_timings)
                     meta = _build_plan_metadata(classification, plan_result, planner_node, total_ms)
-                    raise HTTPException(status_code=classification["http_status"],
-                                        detail={"error": "plan_failed", "llb_plan": meta},
-                                        headers={**_plan_headers(meta), "x-request-id": request_id})
+                    return _plan_error_response(classification["http_status"], "plan_failed", meta, request_id)
             else:
                 # Default: NO silent fallback. Surface the non-success plan state + reason.
                 await _record_plan_metrics(result_state, classification["failure_reason"],
                                            classification["timeout_type"], planner_node,
                                            requested, completed, total_ms, phase_timings)
                 meta = _build_plan_metadata(classification, plan_result, planner_node, total_ms)
-                raise HTTPException(status_code=classification["http_status"],
-                                    detail={"error": "plan_failed", "llb_plan": meta},
-                                    headers={**_plan_headers(meta), "x-request-id": request_id})
+                return _plan_error_response(classification["http_status"], "plan_failed", meta, request_id)
         finally:
             await _release_plan_slot()
 
