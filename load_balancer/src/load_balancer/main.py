@@ -1710,6 +1710,31 @@ def _plan_classify(plan_result) -> Dict[str, Any]:
             "failure_reason": "none", "timeout_type": "none"}
 
 
+def _classify_sse_plan(st: Dict) -> Dict[str, Any]:
+    """Classify a STREAMED plan's terminal state from observed events (no PlanResult).
+    st keys: decomposed(bool), assembled(bool), requested(int), completed(int), error(str)."""
+    err = (st.get("error") or "").lower()
+    requested = int(st.get("requested", 0) or 0)
+    completed = int(st.get("completed", 0) or 0)
+    if not st.get("decomposed"):
+        if "timed out" in err or "timeout" in err:
+            return {"result_state": PLAN_STATE_TIMEOUT, "degraded": False,
+                    "failure_reason": "decompose_timeout", "timeout_type": "decompose"}
+        return {"result_state": PLAN_STATE_PLANNER_UNAVAILABLE, "degraded": False,
+                "failure_reason": "planner_unreachable", "timeout_type": "none"}
+    if not st.get("assembled"):
+        if "timed out" in err or "timeout" in err:
+            return {"result_state": PLAN_STATE_TIMEOUT, "degraded": False,
+                    "failure_reason": "assembly_timeout", "timeout_type": "assembly"}
+        return {"result_state": PLAN_STATE_INTERNAL_ERROR, "degraded": False,
+                "failure_reason": "assembly_failed", "timeout_type": "none"}
+    if requested > 0 and completed < requested:
+        return {"result_state": PLAN_STATE_PARTIAL, "degraded": False,
+                "failure_reason": "subtasks_incomplete", "timeout_type": "none"}
+    return {"result_state": PLAN_STATE_SUCCESS, "degraded": False,
+            "failure_reason": "none", "timeout_type": "none"}
+
+
 async def _acquire_plan_slot() -> bool:
     """Admission control: cap concurrent PLANs (protects ALL paths, incl. direct
     non-litellm callers). Fail-open on a redis error (availability > strict cap)."""
@@ -2164,9 +2189,12 @@ async def _handle_multi_backend_execution(
                                         {"Retry-After": str(getattr(config, "RETRY_AFTER_SECS", 5))})
         allow_fallback = (request.headers.get("x-plan-allow-fallback", "") or "").strip().lower() in ("1", "true", "yes")
 
-        # SSE streaming path: Accept: text/event-stream → execute_plan_stream
+        # SSE streaming path: triggered by Accept: text/event-stream OR a stream:true body
+        # (litellm signals streaming via the body, not the Accept header). Streaming keeps
+        # the connection alive through the long plan compute, avoiding the idle-connection
+        # drop that breaks the synchronous path for multi-minute plans.
         accept_header = request.headers.get("accept", "")
-        if "text/event-stream" in accept_header:
+        if ("text/event-stream" in accept_header) or body.get("stream"):
             async def _sse_call_backend(node: str, messages: list) -> str:
                 plan_body = {**body, "messages": messages, "stream": False}
                 resp = await http_client.post(
@@ -2182,24 +2210,60 @@ async def _handle_multi_backend_execution(
                     yield chunk
 
             async def _plan_sse_generator():
-                async for event in execute_plan_stream(
-                    messages=body.get("messages", []),
-                    call_backend=_sse_call_backend,
-                    stream_backend=_sse_stream_backend,
-                    planner_backend=planner_node,
-                    capability_nodes=capability_nodes,
-                    default_nodes=list(all_eligible),
-                    max_subtasks=int(getattr(config, "PLAN_MAX_SUBTASKS", 5)),
-                    subtask_timeout=float(getattr(config, "PLAN_SUBTASK_TIMEOUT_SECS", 90.0)),
-                ):
-                    if event.event_type == "token":
-                        # chunk is already SSE-formatted bytes from stream_backend (e.g. b"data: {...}\n\n")
-                        chunk = event.data["chunk"]
-                        yield chunk if isinstance(chunk, bytes) else chunk.encode()
-                    elif event.event_type == "error":
-                        yield f"event: error\ndata: {json.dumps(event.data)}\n\n".encode()
-                    else:
-                        yield f"event: {event.event_type}\ndata: {json.dumps(event.data)}\n\n".encode()
+                _t0 = time.monotonic()
+                _st = {"requested": 0, "completed": 0, "error": None, "decomposed": False, "assembled": False}
+                try:
+                    async for event in execute_plan_stream(
+                        messages=body.get("messages", []),
+                        call_backend=_sse_call_backend,
+                        stream_backend=_sse_stream_backend,
+                        planner_backend=planner_node,
+                        capability_nodes=capability_nodes,
+                        default_nodes=list(all_eligible),
+                        max_subtasks=int(getattr(config, "PLAN_MAX_SUBTASKS", 5)),
+                        subtask_timeout=float(getattr(config, "PLAN_SUBTASK_TIMEOUT_SECS", 90.0)),
+                    ):
+                        et = event.event_type
+                        if et == "plan_decomposed":
+                            _st["decomposed"] = True
+                            _st["requested"] = len(event.data.get("tasks", []) or [])
+                            yield f"event: plan_decomposed\ndata: {json.dumps(event.data)}\n\n".encode()
+                        elif et == "task_finished":
+                            if event.data.get("success"):
+                                _st["completed"] += 1
+                            yield f"event: task_finished\ndata: {json.dumps(event.data)}\n\n".encode()
+                        elif et == "token":
+                            # chunk is already OpenAI-format SSE bytes from stream_backend.
+                            chunk = event.data["chunk"]
+                            cb = chunk if isinstance(chunk, bytes) else chunk.encode()
+                            # Suppress the assembly backend's own `data: [DONE]` so it does not
+                            # end the stream before our terminal plan_result + final [DONE].
+                            if b"data: [DONE]" in cb:
+                                continue
+                            _st["assembled"] = True
+                            yield cb
+                        elif et == "error":
+                            _st["error"] = event.data.get("message") or event.data.get("error") or "error"
+                            yield f"event: error\ndata: {json.dumps(event.data)}\n\n".encode()
+                        else:
+                            yield f"event: {et}\ndata: {json.dumps(event.data)}\n\n".encode()
+                finally:
+                    _total_ms = (time.monotonic() - _t0) * 1000.0
+                    _cls = _classify_sse_plan(_st)
+                    try:
+                        await _record_plan_metrics(_cls["result_state"], _cls["failure_reason"],
+                                                   _cls["timeout_type"], planner_node,
+                                                   _st["requested"], _st["completed"], _total_ms, {})
+                    except Exception:
+                        pass
+                    await _release_plan_slot()  # reliable: runs on completion AND client disconnect
+                # Terminal metadata event (machine-readable; mirrors the non-SSE llb_plan{}).
+                # Skipped on client disconnect (GeneratorExit propagates past the finally).
+                _meta = {"mode": "plan", "result_state": _cls["result_state"], "degraded": _cls["degraded"],
+                         "failure_reason": _cls["failure_reason"], "timeout_type": _cls["timeout_type"],
+                         "planner_backend": planner_node, "subtasks_requested": _st["requested"],
+                         "subtasks_completed": _st["completed"], "elapsed_ms": round(_total_ms, 1)}
+                yield f"event: plan_result\ndata: {json.dumps(_meta)}\n\n".encode()
                 yield b"data: [DONE]\n\n"
 
             return StreamingResponse(
@@ -2211,7 +2275,6 @@ async def _handle_multi_backend_execution(
                     "x-request-id": request_id,
                     "x-execution-mode": "plan",
                 },
-                background=BackgroundTask(_release_plan_slot),  # release admission slot when stream ends
             )
 
         # Non-streaming path. The LB owns ALL plan terminal states + machine-readable
