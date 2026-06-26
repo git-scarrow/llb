@@ -60,6 +60,10 @@ class NodeState:
     def push(self, s: str, max_lines: int = 100):
         global SHOW_JSON, SHOW_REASONING, COMPACT
         for part in s.splitlines():
+            if part.startswith(":"):
+                # SSE comment line (e.g. LLB ': llb-obs ' node/failover/hedge metadata)
+                # -- ignored per the SSE spec, like every data-only client.
+                continue
             if part.startswith("event: "):
                 # Skip SSE event lines from upstream metadata/failover
                 continue

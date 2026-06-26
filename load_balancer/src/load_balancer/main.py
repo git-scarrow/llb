@@ -2756,6 +2756,21 @@ async def _record_output_tokens(model: str, node: str, tokens: int):
         pass
 
 
+def _sse_obs(payload: dict) -> bytes:
+    """Emit LLB streaming observability (node/failover/hedge) as an SSE *comment*.
+
+    Lines beginning with ':' are SSE comments: part of the spec, and ignored by every
+    conforming data-only client -- crucially LiteLLM and the OpenAI SDK, which parse
+    ONLY `data:` lines. Previously this metadata was sent as a `data:` chunk with no
+    `choices` array, so strict parsers did choices[0] on [] and raised 'list index out
+    of range' mid-stream (surfacing as litellm.MidStreamFallbackError). Observability
+    consumers read the same payload from the ': llb-obs ' prefix (the `event` field
+    inside identifies meta/failover/hedge_start/hedge_winner) or the response headers.
+    The `/v1/chat/completions` SSE body now contains only spec-valid OpenAI chunks.
+    """
+    return (": llb-obs " + json.dumps(payload) + "\n\n").encode()
+
+
 @app.api_route("/v1/chat/completions", methods=["POST"])
 async def chat_completions(request: Request):
     """Receives a chat completion request, routes it, and streams the response."""
@@ -3135,8 +3150,7 @@ async def chat_completions(request: Request):
                 "failover_count": max(0, attempts - 1),
                 "event": "failover" if attempts > 1 else "meta",
             }
-            yield f"event: {meta['event']}\n".encode()
-            yield ("data: " + json.dumps(meta) + "\n\n").encode()
+            yield _sse_obs(meta)
             try:
                 await _inc_requests_total()
                 # Streaming hedging decision
@@ -3221,8 +3235,7 @@ async def chat_completions(request: Request):
                             "secondary": secondary,
                             "event": "hedge_start",
                         }
-                        yield b"event: hedge_start\n"
-                        yield ("data: " + json.dumps(evt) + "\n\n").encode()
+                        yield _sse_obs(evt)
                         try:
                             await redis_client.incrby("lb:hedges_total", 1)
                         except Exception:
@@ -3254,8 +3267,7 @@ async def chat_completions(request: Request):
                             "winner": secondary,
                             "event": "hedge_winner",
                         }
-                        yield b"event: hedge_winner\n"
-                        yield ("data: " + json.dumps(w_evt) + "\n\n").encode()
+                        yield _sse_obs(w_evt)
                         try:
                             await _record_stream_duration(model_name, secondary, time.monotonic() - start_time)
                         except Exception:
@@ -3288,8 +3300,7 @@ async def chat_completions(request: Request):
                         "secondary": secondary,
                         "event": "hedge_start",
                     }
-                    yield b"event: hedge_start\n"
-                    yield ("data: " + json.dumps(evt) + "\n\n").encode()
+                    yield _sse_obs(evt)
                     try:
                         await redis_client.incrby("lb:hedges_total", 1)
                     except Exception:
@@ -3339,8 +3350,7 @@ async def chat_completions(request: Request):
                         "winner": winner,
                         "event": "hedge_winner",
                     }
-                    yield b"event: hedge_winner\n"
-                    yield ("data: " + json.dumps(w_evt) + "\n\n").encode()
+                    yield _sse_obs(w_evt)
                     try:
                         await _record_stream_duration(model_name, winner, time.monotonic() - start_time)
                     except Exception:
