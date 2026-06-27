@@ -28,7 +28,7 @@ or export variables in your shell.
 
 ```dotenv
 # Core LB connection
-AI_LB_URL=http://localhost:8000
+LLB_URL=http://localhost:8000
 WORKER_MODEL=auto
 WORKER_MAX_TURNS=5
 WORKER_TIMEOUT_SECS=60

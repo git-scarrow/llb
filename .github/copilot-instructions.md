@@ -70,7 +70,7 @@ Routing strategies are in `load_balancer/src/load_balancer/routing/strategies.py
 ### Testing
 
 - **Unit tests**: `python3 -m pytest load_balancer/tests/ --tb=short -q`
-- **E2E tests**: Gated by `AI_LB_BASE_URL` env var; run with `pytest -m e2e`. Skipped (60 tests) when env var is unset.
+- **E2E tests**: Gated by `LLB_BASE_URL` env var; run with `pytest -m e2e`. Skipped (60 tests) when env var is unset.
 - Tests use `pytest-asyncio` and mock Redis/httpx. Keep new tests consistent with the existing mock patterns in `test_unified_lb.py`.
 
 ### Code Style

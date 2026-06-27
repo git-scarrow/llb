@@ -106,8 +106,8 @@ See the README in each service's directory for more details.
 - Response headers: `x-request-id`, `x-selected-model`, `x-routed-node`, `x-attempts`, `x-failover-count` (non-streaming), `x-fallback-model` (if cross-model fallback used).
 - Streaming SSE prelude: `event: meta` (initial), `event: failover` (on reroute) with JSON payload including request_id, attempts, and node.
 - `/metrics` includes failover counters and latency histograms per model/node.
-  - Also exposes streaming histograms: `ai_lb_stream_ttfb_seconds` and `ai_lb_stream_duration_seconds`.
-  - Hedge counters scaffolded: `ai_lb_hedges_total`, `ai_lb_hedge_wins{model,node}`.
+  - Also exposes streaming histograms: `llb_stream_ttfb_seconds` and `llb_stream_duration_seconds`.
+  - Hedge counters scaffolded: `llb_hedges_total`, `llb_hedge_wins{model,node}`.
 
 ## Admin API
 

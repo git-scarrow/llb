@@ -20,7 +20,7 @@ from mcp.types import (
 )
 
 
-LB_URL = os.getenv("LLB_URL", os.getenv("AI_LB_URL", f"http://localhost:{os.getenv('LLB_PORT', os.getenv('AI_LB_PORT', '8002'))}"))  # COMPAT: AI_LB_* fallback remove after 2026-06-01
+LB_URL = os.getenv("LLB_URL", f"http://localhost:{os.getenv('LLB_PORT', '8002')}")
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 

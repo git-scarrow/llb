@@ -11,7 +11,7 @@ from agent.worker import Worker
 
 
 def test_worker_calls_lb_if_available() -> None:
-    lb_url = os.getenv("LLB_URL", os.getenv("AI_LB_URL", f"http://localhost:{os.getenv('LLB_PORT', os.getenv('AI_LB_PORT', '8002'))}"))  # COMPAT: AI_LB_* fallback remove after 2026-06-01
+    lb_url = os.getenv("LLB_URL", f"http://localhost:{os.getenv('LLB_PORT', '8002')}")
     try:
         resp = httpx.get(f"{lb_url}/v1/models", timeout=5.0)
     except httpx.RequestError:

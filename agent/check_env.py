@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import List
 
 
-DEFAULT_LB_URL = f"http://127.0.0.1:{os.getenv('LLB_PORT', os.getenv('AI_LB_PORT', '8002'))}"  # COMPAT: AI_LB_PORT fallback remove after 2026-06-01
+DEFAULT_LB_URL = f"http://127.0.0.1:{os.getenv('LLB_PORT', '8002')}"
 LB_TIMEOUT_SECS = 2.0
 
 
@@ -88,7 +88,7 @@ def _print_report(results: List[CheckResult]) -> bool:
 
 
 def main() -> int:
-    lb_url = os.getenv("LLB_URL", os.getenv("AI_LB_URL", DEFAULT_LB_URL))  # COMPAT: AI_LB_URL fallback remove after 2026-06-01
+    lb_url = os.getenv("LLB_URL", DEFAULT_LB_URL)
     results = [
         _check_import("httpx"),
         _check_import("openai"),

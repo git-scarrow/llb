@@ -23,12 +23,12 @@ This service is the main user-facing entry point. It receives requests and route
     - `event: hedge_start` with `{request_id, model, primary, secondary}` when a duplicate attempt is launched.
     - `event: hedge_winner` with `{request_id, model, primary, secondary, winner}` when one stream wins the race.
 - Metrics at `/metrics` (Prometheus text):
-  - `ai_lb_requests_total` counter.
-  - `ai_lb_up{node}` gauge; `ai_lb_inflight{node}` gauge; `ai_lb_failures{node}` gauge.
-  - `ai_lb_failovers_total` and `ai_lb_failovers_total{model}` counters.
-  - `ai_lb_latency_seconds_*{model,node}` histogram with buckets: 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, +Inf.
-  - Streaming histograms: `ai_lb_stream_ttfb_seconds_*`, `ai_lb_stream_duration_seconds_*` per model/node.
-  - Hedging counters: `ai_lb_hedges_total`, `ai_lb_hedge_wins{model,node}`, and aggregate `ai_lb_hedge_wins_total{model}`.
+  - `llb_requests_total` counter.
+  - `llb_up{node}` gauge; `llb_inflight{node}` gauge; `llb_failures{node}` gauge.
+  - `llb_failovers_total` and `llb_failovers_total{model}` counters.
+  - `llb_latency_seconds_*{model,node}` histogram with buckets: 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, +Inf.
+  - Streaming histograms: `llb_stream_ttfb_seconds_*`, `llb_stream_duration_seconds_*` per model/node.
+  - Hedging counters: `llb_hedges_total`, `llb_hedge_wins{model,node}`, and aggregate `llb_hedge_wins_total{model}`.
 
 ## Headers and SSE
 
@@ -76,16 +76,16 @@ This service is the main user-facing entry point. It receives requests and route
 1) Bring up the stack with two fake nodes and aggressive hedging.
    - `ROUTING_STRATEGY=RANDOM HEDGING_MAX_DELAY_MS=0 HEDGING_SMALL_MODELS_ONLY=false docker compose --profile full up -d`
 2) Seed Redis to advertise the model on both nodes and mark both healthy.
-   - `redis-cli SADD nodes:healthy ai_lb_node1:9999 ai_lb_node2:9999`
-   - `redis-cli SET node:ai_lb_node1:9999:models '{"object":"list","data":[{"id":"m","object":"model"}]}'`
-   - `redis-cli SET node:ai_lb_node2:9999:models '{"object":"list","data":[{"id":"m","object":"model"}]}'`
+   - `redis-cli SADD nodes:healthy llb_node1:9999 llb_node2:9999`
+   - `redis-cli SET node:llb_node1:9999:models '{"object":"list","data":[{"id":"m","object":"model"}]}'`
+   - `redis-cli SET node:llb_node2:9999:models '{"object":"list","data":[{"id":"m","object":"model"}]}'`
 3) Saturate node1 only to force hedging to node2:
-   - `redis-cli SET node:ai_lb_node1:9999:maxconn 1`
-   - `redis-cli SET node:ai_lb_node1:9999:inflight 1`
+   - `redis-cli SET node:llb_node1:9999:maxconn 1`
+   - `redis-cli SET node:llb_node1:9999:inflight 1`
 4) Stream a request and observe SSE events:
    - `curl -N -s http://localhost:8000/v1/chat/completions -H 'content-type: application/json' -d '{"model":"m","messages":[{"role":"user","content":"ping"}],"stream":true}' | grep -E 'event: hedge_|data:'`
 5) Check metrics:
-   - `/metrics` should show `ai_lb_hedges_total > 0` and `ai_lb_hedge_wins{model="m",node="ai_lb_node2:9999"} > 0`.
+   - `/metrics` should show `llb_hedges_total > 0` and `llb_hedge_wins{model="m",node="llb_node2:9999"} > 0`.
 
 ## Admin API
 

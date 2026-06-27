@@ -17,7 +17,7 @@ from rich.table import Table
 from rich.text import Text
 
 
-DEFAULT_LB = os.getenv("LLB_URL", os.getenv("AI_LB_URL", f"http://localhost:{os.getenv('LLB_PORT', os.getenv('AI_LB_PORT', '8002'))}"))  # COMPAT: AI_LB_* fallback remove after 2026-06-01
+DEFAULT_LB = os.getenv("LLB_URL", f"http://localhost:{os.getenv('LLB_PORT', '8002')}")
 
 # Rendering options (set via CLI flags in main())
 SHOW_JSON = False
