@@ -14,7 +14,7 @@ cd "$ROOT_DIR"
 
 # Source .env for LLB_PORT if not already set
 [[ -f "$ROOT_DIR/.env" ]] && set -a && source "$ROOT_DIR/.env" && set +a
-LLB_PORT="${LLB_PORT:-${AI_LB_PORT:-8002}}"  # COMPAT: AI_LB_PORT fallback remove after 2026-06-01
+LLB_PORT="${LLB_PORT:-8002}"
 LB_URL="http://localhost:${LLB_PORT}"
 CONFIGURE=true
 

@@ -3,6 +3,6 @@ revision = 3
 requires-python = ">=3.13"
 
 [[package]]
-name = "ai-lb-load-balancer"
+name = "llb-load-balancer"
 version = "0.1.0"
 source = { editable = "." }

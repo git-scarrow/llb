@@ -116,7 +116,7 @@ secrets:
 services:
   redis:
     image: "redis:7-alpine"
-    container_name: ai_lb_redis
+    container_name: llb_redis
     restart: always
     network_mode: host
     volumes:
@@ -132,7 +132,7 @@ services:
 
   monitor:
     image: "localhost:5000/llb-monitor:latest"
-    container_name: ai_lb_monitor
+    container_name: llb_monitor
     network_mode: host
     restart: always
     env_file: /etc/llb/prod.env
@@ -145,7 +145,7 @@ services:
 
   load_balancer:
     image: "localhost:5000/llb:latest"
-    container_name: ai_lb_load_balancer
+    container_name: llb_load_balancer
     network_mode: host
     restart: always
     env_file: /etc/llb/prod.env
@@ -237,7 +237,7 @@ import sys
 import json
 import logging
 
-log = logging.getLogger("ai_lb.config")
+log = logging.getLogger("llb.config")
 
 
 class ConfigError(Exception):
@@ -517,48 +517,48 @@ format (no `prometheus_client` library — custom renderer in `main.py`).
 
 | Metric Name | Labels | Description |
 |-------------|--------|-------------|
-| `ai_lb_requests_total` | — | Total requests handled |
-| `ai_lb_failovers_total` | `model`, `node` | Total failover events |
-| `ai_lb_rate_limits_total` | `node` | Total 429 responses from backends |
-| `ai_lb_hedges_total` | — | Total hedged duplicate attempts |
-| `ai_lb_hedge_wins` | `model`, `node` | Hedge wins by model+node |
-| `ai_lb_hedge_wins_total` | `model` | Aggregate hedge wins by model |
-| `ai_lb_multi_exec_total` | `mode` | Multi-exec requests by mode (race/all/sequence/consensus/plan) |
-| `ai_lb_multi_exec_succeeded` | `mode` | Backends that succeeded per multi-exec |
-| `ai_lb_consensus_total` | `model` | Consensus requests by model |
-| `ai_lb_consensus_agreements` | — | Unanimous consensus count |
-| `ai_lb_consensus_disagreements` | — | Non-unanimous consensus count |
+| `llb_requests_total` | — | Total requests handled |
+| `llb_failovers_total` | `model`, `node` | Total failover events |
+| `llb_rate_limits_total` | `node` | Total 429 responses from backends |
+| `llb_hedges_total` | — | Total hedged duplicate attempts |
+| `llb_hedge_wins` | `model`, `node` | Hedge wins by model+node |
+| `llb_hedge_wins_total` | `model` | Aggregate hedge wins by model |
+| `llb_multi_exec_total` | `mode` | Multi-exec requests by mode (race/all/sequence/consensus/plan) |
+| `llb_multi_exec_succeeded` | `mode` | Backends that succeeded per multi-exec |
+| `llb_consensus_total` | `model` | Consensus requests by model |
+| `llb_consensus_agreements` | — | Unanimous consensus count |
+| `llb_consensus_disagreements` | — | Non-unanimous consensus count |
 
 **Gauges** (point-in-time values):
 
 | Metric Name | Labels | Description |
 |-------------|--------|-------------|
-| `ai_lb_up` | `node` | Node health: 1 = healthy, 0 = unhealthy |
-| `ai_lb_inflight` | `node` | Current in-flight requests per node |
-| `ai_lb_failures` | `node` | Recent failure count per node (within penalty TTL) |
-| `ai_lb_rate_limits` | `node` | Rate limit count per node (within window) |
+| `llb_up` | `node` | Node health: 1 = healthy, 0 = unhealthy |
+| `llb_inflight` | `node` | Current in-flight requests per node |
+| `llb_failures` | `node` | Recent failure count per node (within penalty TTL) |
+| `llb_rate_limits` | `node` | Rate limit count per node (within window) |
 
 **Histograms** (with `_bucket`, `_sum`, `_count` suffixes):
 
 | Metric Name | Labels | Buckets (seconds) | Description |
 |-------------|--------|-------------------|-------------|
-| `ai_lb_latency_seconds` | `model`, `node` | 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, +Inf | End-to-end request latency |
-| `ai_lb_stream_ttfb_seconds` | `model`, `node` | 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, +Inf | Streaming time-to-first-byte |
-| `ai_lb_stream_duration_seconds` | `model`, `node` | 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, +Inf | Total streaming request duration |
+| `llb_latency_seconds` | `model`, `node` | 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, +Inf | End-to-end request latency |
+| `llb_stream_ttfb_seconds` | `model`, `node` | 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, +Inf | Streaming time-to-first-byte |
+| `llb_stream_duration_seconds` | `model`, `node` | 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, +Inf | Total streaming request duration |
 
 **Summary** (from multi-exec backend count distribution):
 
 | Metric Name | Labels | Description |
 |-------------|--------|-------------|
-| `ai_lb_multi_exec_backends` | `mode` | Backends attempted per multi-exec request |
-| `ai_lb_consensus_agreement_count` | — | Distribution of agreement counts |
+| `llb_multi_exec_backends` | `mode` | Backends attempted per multi-exec request |
+| `llb_consensus_agreement_count` | — | Distribution of agreement counts |
 
 **Additional metric to add** (assumption: not yet exported; add to metrics renderer):
 
 | Metric Name | Labels | Type | Description |
 |-------------|--------|------|-------------|
-| `ai_lb_ewma_output_tokens` | `node`, `model` | Gauge | Current EWMA output token count from Redis key `node:{node}:ewma_output_tokens` |
-| `ai_lb_circuit_breaker_open` | `node` | Gauge | 1 if CB open (Redis key `lb:circuit:{node}` exists), 0 otherwise |
+| `llb_ewma_output_tokens` | `node`, `model` | Gauge | Current EWMA output token count from Redis key `node:{node}:ewma_output_tokens` |
+| `llb_circuit_breaker_open` | `node` | Gauge | 1 if CB open (Redis key `lb:circuit:{node}` exists), 0 otherwise |
 
 ### 3.2 Prometheus Scrape Config
 
@@ -586,37 +586,37 @@ scrape_configs:
 
 | Panel | Type | PromQL | Legend |
 |-------|------|--------|--------|
-| Request Rate | Time series | `rate(ai_lb_requests_total[1m])` | `req/s` |
-| Error Rate % | Time series | `100 * rate(ai_lb_failovers_total[1m]) / rate(ai_lb_requests_total[1m])` | `error %` |
-| In-flight Requests | Time series | `sum by (node) (ai_lb_inflight)` | `{{node}}` |
-| Active Nodes | Stat | `count(ai_lb_up == 1)` | `healthy nodes` |
+| Request Rate | Time series | `rate(llb_requests_total[1m])` | `req/s` |
+| Error Rate % | Time series | `100 * rate(llb_failovers_total[1m]) / rate(llb_requests_total[1m])` | `error %` |
+| In-flight Requests | Time series | `sum by (node) (llb_inflight)` | `{{node}}` |
+| Active Nodes | Stat | `count(llb_up == 1)` | `healthy nodes` |
 
 **Row 2 — Latency**
 
 | Panel | Type | PromQL | Legend |
 |-------|------|--------|--------|
-| Latency P50 | Time series | `histogram_quantile(0.50, sum by (le) (rate(ai_lb_latency_seconds_bucket[5m])))` | `P50` |
-| Latency P95 | Time series | `histogram_quantile(0.95, sum by (le) (rate(ai_lb_latency_seconds_bucket[5m])))` | `P95` |
-| Latency P99 | Time series | `histogram_quantile(0.99, sum by (le) (rate(ai_lb_latency_seconds_bucket[5m])))` | `P99` |
-| TTFB P95 (streaming) | Time series | `histogram_quantile(0.95, sum by (le) (rate(ai_lb_stream_ttfb_seconds_bucket[5m])))` | `TTFB P95` |
+| Latency P50 | Time series | `histogram_quantile(0.50, sum by (le) (rate(llb_latency_seconds_bucket[5m])))` | `P50` |
+| Latency P95 | Time series | `histogram_quantile(0.95, sum by (le) (rate(llb_latency_seconds_bucket[5m])))` | `P95` |
+| Latency P99 | Time series | `histogram_quantile(0.99, sum by (le) (rate(llb_latency_seconds_bucket[5m])))` | `P99` |
+| TTFB P95 (streaming) | Time series | `histogram_quantile(0.95, sum by (le) (rate(llb_stream_ttfb_seconds_bucket[5m])))` | `TTFB P95` |
 
 **Row 3 — Circuit Breaker & Node Health**
 
 | Panel | Type | PromQL | Legend |
 |-------|------|--------|--------|
-| CB Open (per node) | State timeline | `ai_lb_circuit_breaker_open` | `{{node}}` |
-| Node Up/Down | State timeline | `ai_lb_up` | `{{node}}` |
-| Failure Count (per node) | Time series | `ai_lb_failures` | `{{node}}` |
-| Rate Limits (per node) | Time series | `rate(ai_lb_rate_limits_total[5m])` | `{{node}}` |
+| CB Open (per node) | State timeline | `llb_circuit_breaker_open` | `{{node}}` |
+| Node Up/Down | State timeline | `llb_up` | `{{node}}` |
+| Failure Count (per node) | Time series | `llb_failures` | `{{node}}` |
+| Rate Limits (per node) | Time series | `rate(llb_rate_limits_total[5m])` | `{{node}}` |
 
 **Row 4 — Cost & EWMA**
 
 | Panel | Type | PromQL | Legend |
 |-------|------|--------|--------|
-| EWMA Output Tokens | Time series | `ai_lb_ewma_output_tokens` | `{{node}} / {{model}}` |
-| Hedge Rate | Time series | `rate(ai_lb_hedges_total[5m])` | `hedges/s` |
-| Hedge Win Rate | Time series | `rate(ai_lb_hedge_wins_total[5m])` | `{{model}}` |
-| Multi-exec by Mode | Time series | `rate(ai_lb_multi_exec_total[5m])` | `{{mode}}` |
+| EWMA Output Tokens | Time series | `llb_ewma_output_tokens` | `{{node}} / {{model}}` |
+| Hedge Rate | Time series | `rate(llb_hedges_total[5m])` | `hedges/s` |
+| Hedge Win Rate | Time series | `rate(llb_hedge_wins_total[5m])` | `{{model}}` |
+| Multi-exec by Mode | Time series | `rate(llb_multi_exec_total[5m])` | `{{mode}}` |
 
 ### 3.4 Alerting Rules
 
@@ -631,8 +631,8 @@ groups:
       - alert: AILBHighErrorRate
         expr: |
           (
-            rate(ai_lb_failovers_total[2m]) /
-            rate(ai_lb_requests_total[2m])
+            rate(llb_failovers_total[2m]) /
+            rate(llb_requests_total[2m])
           ) > 0.05
         for: 2m
         labels:
@@ -646,7 +646,7 @@ groups:
 
       # ── Circuit breaker ───────────────────────────────────────────────────
       - alert: AILBCircuitBreakerOpen
-        expr: ai_lb_circuit_breaker_open == 1
+        expr: llb_circuit_breaker_open == 1
         for: 60s
         labels:
           severity: warning
@@ -659,7 +659,7 @@ groups:
 
       # ── All nodes down ────────────────────────────────────────────────────
       - alert: AILBAllNodesUnhealthy
-        expr: count(ai_lb_up == 1) == 0
+        expr: count(llb_up == 1) == 0
         for: 0m
         labels:
           severity: critical
@@ -676,9 +676,9 @@ groups:
       - alert: AILBEwmaTokenCostAnomaly
         expr: |
           (
-            ai_lb_ewma_output_tokens
+            llb_ewma_output_tokens
             /
-            quantile(0.5, ai_lb_ewma_output_tokens)
+            quantile(0.5, llb_ewma_output_tokens)
           ) > 3
         for: 5m
         labels:
@@ -692,7 +692,7 @@ groups:
 
       # ── No traffic (dead man's switch) ───────────────────────────────────
       - alert: AILBNoTraffic
-        expr: rate(ai_lb_requests_total[5m]) == 0
+        expr: rate(llb_requests_total[5m]) == 0
         for: 5m
         labels:
           severity: warning
@@ -706,7 +706,7 @@ groups:
       - alert: AILBHighP99Latency
         expr: |
           histogram_quantile(0.99,
-            sum by (le) (rate(ai_lb_latency_seconds_bucket[5m]))
+            sum by (le) (rate(llb_latency_seconds_bucket[5m]))
           ) > 10
         for: 5m
         labels:
@@ -769,11 +769,11 @@ groups:
    ```
 10. Verify metrics endpoint:
     ```bash
-    curl -s http://localhost:8000/metrics | grep ai_lb_requests_total
+    curl -s http://localhost:8000/metrics | grep llb_requests_total
     ```
 11. Confirm config validation passed (check logs for errors):
     ```bash
-    docker logs ai_lb_load_balancer 2>&1 | grep -E "Config validation|ConfigError|MISSING"
+    docker logs llb_load_balancer 2>&1 | grep -E "Config validation|ConfigError|MISSING"
     ```
 
 ### 4.2 Rolling Update (Zero-Downtime)
@@ -788,12 +788,12 @@ groups:
    ```
 2. Smoke-test the candidate image locally (non-prod port):
    ```bash
-   docker run --rm -d --name ai_lb_candidate \
+   docker run --rm -d --name llb_candidate \
      --env-file /etc/llb/prod.env \
      -p 18000:8000 \
      localhost:5000/llb:candidate
    curl -sf http://localhost:18000/health && echo "Candidate OK"
-   docker stop ai_lb_candidate
+   docker stop llb_candidate
    ```
 3. Tag candidate as latest:
    ```bash
@@ -806,7 +806,7 @@ groups:
 5. Drain in-flight requests (wait for inflight gauge to reach 0 or timeout 60s):
    ```bash
    for i in $(seq 1 60); do
-     inflight=$(curl -s http://localhost:8000/metrics | grep "^ai_lb_inflight" | awk '{sum+=$2} END {print sum}')
+     inflight=$(curl -s http://localhost:8000/metrics | grep "^llb_inflight" | awk '{sum+=$2} END {print sum}')
      [ "$inflight" = "0" ] && echo "Drained" && break
      echo "Inflight: $inflight — waiting..."; sleep 1
    done
@@ -853,7 +853,7 @@ groups:
    ```
 5. Verify error rate has returned to baseline:
    ```bash
-   curl -s http://localhost:8000/metrics | grep ai_lb_failovers_total
+   curl -s http://localhost:8000/metrics | grep llb_failovers_total
    ```
 6. Document the rollback reason and failed image tag in the incident log.
 
@@ -880,10 +880,10 @@ groups:
    ```
 4. Verify the new node appears as healthy:
    ```bash
-   docker exec ai_lb_redis redis-cli smembers nodes:healthy
+   docker exec llb_redis redis-cli smembers nodes:healthy
    curl -s http://localhost:8000/v1/nodes | python3 -m json.tool
    ```
-5. Verify `ai_lb_up{node="newhost:port"}` gauge equals 1 in `/metrics`.
+5. Verify `llb_up{node="newhost:port"}` gauge equals 1 in `/metrics`.
 
 **Removing a node:**
 
@@ -892,8 +892,8 @@ groups:
 3. Manually evict the node from Redis to prevent stale routing (do this before restart):
    ```bash
    NODE="oldhost:1234"
-   docker exec ai_lb_redis redis-cli srem nodes:healthy "$NODE"
-   docker exec ai_lb_redis redis-cli del "node:${NODE}:inflight" \
+   docker exec llb_redis redis-cli srem nodes:healthy "$NODE"
+   docker exec llb_redis redis-cli del "node:${NODE}:inflight" \
      "node:${NODE}:failures" "lb:circuit:${NODE}" "penalty:${NODE}"
    ```
 4. Restart load_balancer to pick up config change:
@@ -910,12 +910,12 @@ automatic reset is not occurring due to a bug.
 
 1. Identify the open circuit breaker:
    ```bash
-   docker exec ai_lb_redis redis-cli keys "lb:circuit:*"
+   docker exec llb_redis redis-cli keys "lb:circuit:*"
    # Output: lb:circuit:hostname:port
    ```
 2. Check when it expires:
    ```bash
-   docker exec ai_lb_redis redis-cli ttl "lb:circuit:hostname:port"
+   docker exec llb_redis redis-cli ttl "lb:circuit:hostname:port"
    # -1 = no TTL (stuck); positive = seconds remaining
    ```
 3. Verify the backend is actually healthy before resetting:
@@ -924,18 +924,18 @@ automatic reset is not occurring due to a bug.
    ```
 4. If confirmed healthy, delete the CB key:
    ```bash
-   docker exec ai_lb_redis redis-cli del "lb:circuit:hostname:port"
+   docker exec llb_redis redis-cli del "lb:circuit:hostname:port"
    ```
 5. Also clear the penalty key if present:
    ```bash
-   docker exec ai_lb_redis redis-cli del "penalty:hostname:port"
+   docker exec llb_redis redis-cli del "penalty:hostname:port"
    ```
 6. Verify the node returns to healthy set:
    ```bash
-   docker exec ai_lb_redis redis-cli sismember nodes:healthy "hostname:port"
+   docker exec llb_redis redis-cli sismember nodes:healthy "hostname:port"
    # Expected: 1
    ```
-7. Verify `ai_lb_circuit_breaker_open{node="hostname:port"}` returns 0 in `/metrics`.
+7. Verify `llb_circuit_breaker_open{node="hostname:port"}` returns 0 in `/metrics`.
 8. Monitor for 2 minutes to confirm the node stays healthy and CB does not re-open.
 
 ### 4.6 Horizontal Scaling (Multiple llb Instances Behind HAProxy)
@@ -960,11 +960,11 @@ defaults
     option forwardfor
     option http-server-close
 
-frontend ai_lb_frontend
+frontend llb_frontend
     bind :80
-    default_backend ai_lb_pool
+    default_backend llb_pool
 
-backend ai_lb_pool
+backend llb_pool
     balance leastconn
     option httpchk GET /health
     http-check expect status 200
@@ -978,7 +978,7 @@ backend ai_lb_pool
 1. Start a second load_balancer container on port 8001 (same Redis, same prod.env):
    ```bash
    docker run -d \
-     --name ai_lb_load_balancer_2 \
+     --name llb_load_balancer_2 \
      --network host \
      --env-file /etc/llb/prod.env \
      -e REDIS_HOST=localhost \
@@ -991,7 +991,7 @@ backend ai_lb_pool
    ```bash
    curl -sf http://localhost:8001/health
    ```
-3. Add the new instance to HAProxy `ai_lb_pool` and reload HAProxy:
+3. Add the new instance to HAProxy `llb_pool` and reload HAProxy:
    ```bash
    sudo haproxy -f /etc/haproxy/haproxy.cfg -c   # validate config
    sudo systemctl reload haproxy
@@ -1011,20 +1011,20 @@ instance-local state is maintained beyond in-process async tasks (hedging, plan 
 
 - [ ] **AC1 — Container health check within 30s:** `docker run` + `HEALTHCHECK` probe returns
   healthy status within 30 seconds of container start. Verified by `docker inspect
-  ai_lb_load_balancer --format='{{.State.Health.Status}}'` returning `healthy`.
+  llb_load_balancer --format='{{.State.Health.Status}}'` returning `healthy`.
 
 - [ ] **AC2 — Boot validation with clear errors:** Remove a required env var (e.g. unset both
   `CLOUD_BACKENDS` and `SCAN_HOSTS`), start the container, and observe `sys.exit(1)` with a
   message matching `[MISSING REQUIRED CONFIG]` in container logs within 5 seconds.
 
 - [ ] **AC3 — Prometheus scrape returns all defined metrics:** `curl http://localhost:8000/metrics`
-  returns all metrics from Section 3.1, including `ai_lb_circuit_breaker_open` and
-  `ai_lb_ewma_output_tokens`. Validated by checking each metric name is present in the response.
+  returns all metrics from Section 3.1, including `llb_circuit_breaker_open` and
+  `llb_ewma_output_tokens`. Validated by checking each metric name is present in the response.
 
 - [ ] **AC4 — Alerting rules fire on simulated failures:**
-  - Inject 10 errors into Redis counter (`docker exec ai_lb_redis redis-cli incrby lb:failovers_total 100`)
+  - Inject 10 errors into Redis counter (`docker exec llb_redis redis-cli incrby lb:failovers_total 100`)
     and verify `AILBHighErrorRate` alert fires in Prometheus Alertmanager within 2 minutes.
-  - Set a CB key with no TTL (`docker exec ai_lb_redis redis-cli set lb:circuit:testnode:1234 1`)
+  - Set a CB key with no TTL (`docker exec llb_redis redis-cli set lb:circuit:testnode:1234 1`)
     and verify `AILBCircuitBreakerOpen` alert fires within 90 seconds.
   - Delete all members from `nodes:healthy` and verify `AILBAllNodesUnhealthy` fires immediately.
 

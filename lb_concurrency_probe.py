@@ -6,7 +6,7 @@ from typing import List
 
 import requests
 
-LB = os.getenv("LLB_URL", os.getenv("AI_LB_URL", f"http://localhost:{os.getenv('LLB_PORT', os.getenv('AI_LB_PORT', '8002'))}"))  # COMPAT: AI_LB_* fallback remove after 2026-06-01
+LB = os.getenv("LLB_URL", f"http://localhost:{os.getenv('LLB_PORT', '8002')}")
 
 
 def get_model() -> str:

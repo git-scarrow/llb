@@ -3,7 +3,7 @@ import threading
 import time
 import requests
 
-LB = os.getenv("LLB_URL", os.getenv("AI_LB_URL", f"http://localhost:{os.getenv('LLB_PORT', os.getenv('AI_LB_PORT', '8002'))}"))  # COMPAT: AI_LB_* fallback remove after 2026-06-01
+LB = os.getenv("LLB_URL", f"http://localhost:{os.getenv('LLB_PORT', '8002')}")
 MODEL = os.getenv("EMB_MODEL", "text-embedding-nomic-embed-text-v1.5")
 N = int(os.getenv("BURST_N", "60"))
 SAMPLE_MS = int(os.getenv("SAMPLE_MS", "100"))
